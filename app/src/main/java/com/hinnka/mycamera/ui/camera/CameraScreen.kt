@@ -1101,6 +1101,7 @@ fun CameraScreen(
                             var totalDrag = 0f
                             awaitEachGesture {
                                 var gestureStartedInPreviewControl: Boolean? = null
+                                var childConsumedDrag = false
                                 while (true) {
                                     val event = awaitPointerEvent()
                                     if (gestureStartedInPreviewControl == null) {
@@ -1127,6 +1128,8 @@ fun CameraScreen(
                                     }
                                     if (event.changes.size >= 2) {
                                         // Pinch to zoom
+                                        childConsumedDrag = true
+                                        totalDrag = 0f
                                         viewModel.isZooming = true
                                         val zoom = event.calculateZoom()
                                         if (zoom != 1f) {
@@ -1141,13 +1144,17 @@ fun CameraScreen(
                                     } else if (event.changes.size == 1) {
                                         // Single finger -> horizontal drag for LUT switch
                                         val change = event.changes[0]
-                                        if (change.pressed) {
+                                        if (change.isConsumed && change.position != change.previousPosition) {
+                                            childConsumedDrag = true
+                                            totalDrag = 0f
+                                        }
+                                        if (change.pressed && !childConsumedDrag) {
                                             val dragAmount =
                                                 change.position.x - change.previousPosition.x
                                             totalDrag += dragAmount
-                                        } else {
+                                        } else if (!change.pressed) {
                                             // onDragEnd logic
-                                            if (abs(totalDrag) > 100) {
+                                            if (!childConsumedDrag && abs(totalDrag) > 100) {
                                                 val selectedLut = if (totalDrag > 0) {
                                                     viewModel.switchToPreviousLut()
                                                 } else {
@@ -1200,11 +1207,17 @@ fun CameraScreen(
                             baselineColorRecipeParams = currentBaselineRecipeParams,
                             colorRecipeParams = previewRecipeParamsOverride ?: currentRecipeParams,
                             focusPoint = state.focusPoint,
+                            meteringPoint = state.meteringPoint,
+                            canMoveMeteringPoint = state.supportsPointMetering &&
+                                !state.isCapturing && activePanel == ActivePanel.NONE,
+                            onMeteringPointMove = viewModel::moveMeteringPoint,
+                            onFocusPointMove = viewModel::moveFocusPoint,
+                            onMeteringPointMerge = viewModel::mergeMeteringPoint,
                             focusPointSource = state.focusPointSource,
                             isFocusLocked = state.isFocusLocked,
                             isFocusing = state.isFocusing,
                             focusSuccess = state.focusSuccess,
-                            meteringMode = state.meteringMode,
+                            meteringMode = state.effectiveMeteringMode,
                             onSurfaceTextureReady = { surfaceTexture ->
                                 previewSurfaceTexture = surfaceTexture
                             },

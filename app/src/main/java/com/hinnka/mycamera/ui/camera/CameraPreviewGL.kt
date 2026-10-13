@@ -54,6 +54,11 @@ fun CameraPreviewGL(
     baselineColorRecipeParams: ColorRecipeParams,
     colorRecipeParams: ColorRecipeParams,
     focusPoint: Pair<Float, Float>?,
+    meteringPoint: Pair<Float, Float>? = null,
+    canMoveMeteringPoint: Boolean = false,
+    onMeteringPointMove: (Float, Float, Float) -> Unit = { _, _, _ -> },
+    onFocusPointMove: (Float, Float, Float, Boolean) -> Unit = { _, _, _, _ -> },
+    onMeteringPointMerge: () -> Unit = {},
     focusPointSource: FocusPointSource = FocusPointSource.MANUAL,
     isFocusLocked: Boolean = false,
     isFocusing: Boolean,
@@ -312,7 +317,7 @@ fun CameraPreviewGL(
                         glSurfaceView.setBaselineParams(baselineColorRecipeParams)
                         glSurfaceView.setParams(colorRecipeParams)
 
-                        glSurfaceView.setFocusPoint(focusPoint?.takeIf {
+                        glSurfaceView.setMeteringPoint((meteringPoint ?: focusPoint)?.takeIf {
                             focusPointSource == FocusPointSource.MANUAL
                         }?.let {
                             android.graphics.PointF(
@@ -334,6 +339,11 @@ fun CameraPreviewGL(
             // 对焦指示器
             FocusIndicator(
                 position = focusPoint,
+                meteringPosition = meteringPoint,
+                canMoveMeteringPoint = canMoveMeteringPoint,
+                onMeteringPointMove = onMeteringPointMove,
+                onFocusPointMove = onFocusPointMove,
+                onMeteringPointMerge = onMeteringPointMerge,
                 source = focusPointSource,
                 isFocusLocked = isFocusLocked,
                 isFocusing = isFocusing,

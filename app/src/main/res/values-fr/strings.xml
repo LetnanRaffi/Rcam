@@ -355,4 +355,6 @@
     <string name="settings_raw_leica_color_matrix_description">Choisissez la matrice de couleur de votre appareil ou du M9 pour calibrer les couleurs RAW.</string>
     <string name="settings_raw_leica_color_matrix_device">Par défaut</string>
     <string name="settings_raw_leica_color_matrix_m9">M9</string>
+    <string name="camera_focus_point_label">Mise au point</string>
+    <string name="camera_metering_point_label">Mesure</string>
 </resources>

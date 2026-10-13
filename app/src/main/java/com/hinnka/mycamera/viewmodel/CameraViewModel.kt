@@ -2562,9 +2562,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 glSurfaceView?.let { view ->
                     view.setVideoLogProfile(currentState.videoConfig.logProfile)
-                    currentState.focusPoint?.let { fp ->
-                        view.setFocusPoint(android.graphics.PointF(fp.first, fp.second))
-                    }
+                    view.setMeteringPoint(currentState.meteringReferencePoint?.let { point ->
+                        android.graphics.PointF(point.first, point.second)
+                    })
+                    view.setMeteringMode(currentState.effectiveMeteringMode)
                     view.setAutoFocus(currentState.isAutoFocus)
                 }
             }
@@ -4139,6 +4140,18 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun focusOnPoint(x: Float, y: Float, viewWidth: Int, viewHeight: Int) {
         cameraController.focusOnPoint(x, y, viewWidth, viewHeight)
+    }
+
+    fun moveMeteringPoint(x: Float, y: Float, viewAspectRatio: Float) {
+        cameraController.moveMeteringPoint(x, y, viewAspectRatio)
+    }
+
+    fun moveFocusPoint(x: Float, y: Float, viewAspectRatio: Float, finished: Boolean) {
+        cameraController.moveFocusPoint(x, y, viewAspectRatio, finished)
+    }
+
+    fun mergeMeteringPoint() {
+        cameraController.mergeMeteringPoint()
     }
 
     fun lockFocusOnPoint(x: Float, y: Float, viewWidth: Int, viewHeight: Int) {

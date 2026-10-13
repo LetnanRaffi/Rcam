@@ -203,8 +203,8 @@ class CameraGLSurfaceView @JvmOverloads constructor(
         }
     }
 
-    fun setFocusPoint(point: PointF?) {
-        renderer.focusPoint = point
+    fun setMeteringPoint(point: PointF?) {
+        renderer.meteringPoint = point
     }
 
     fun setMeteringMode(mode: MeteringMode) {

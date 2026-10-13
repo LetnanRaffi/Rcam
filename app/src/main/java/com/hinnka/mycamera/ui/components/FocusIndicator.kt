@@ -5,6 +5,10 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
@@ -16,11 +20,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.hinnka.mycamera.R
 import com.hinnka.mycamera.camera.FocusPointSource
 import kotlinx.coroutines.delay
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -29,6 +43,11 @@ import kotlin.math.roundToInt
 @Composable
 fun FocusIndicator(
     position: Pair<Float, Float>?,
+    meteringPosition: Pair<Float, Float>? = null,
+    canMoveMeteringPoint: Boolean = false,
+    onMeteringPointMove: (Float, Float, Float) -> Unit = { _, _, _ -> },
+    onFocusPointMove: (Float, Float, Float, Boolean) -> Unit = { _, _, _, _ -> },
+    onMeteringPointMerge: () -> Unit = {},
     source: FocusPointSource = FocusPointSource.MANUAL,
     isFocusLocked: Boolean = false,
     isFocusing: Boolean,
@@ -36,10 +55,26 @@ fun FocusIndicator(
     modifier: Modifier = Modifier
 ) {
     var visible by remember { mutableStateOf(position != null) }
+    val isSeparated = source == FocusPointSource.MANUAL && meteringPosition != null
+    val currentFocusPosition by rememberUpdatedState(position)
+    val currentIsSeparated by rememberUpdatedState(isSeparated)
+    val currentMeteringPosition by rememberUpdatedState(meteringPosition ?: position)
+    val currentOnMeteringPointMove by rememberUpdatedState(onMeteringPointMove)
+    val currentOnFocusPointMove by rememberUpdatedState(onFocusPointMove)
+    val currentOnMeteringPointMerge by rememberUpdatedState(onMeteringPointMerge)
+    val textMeasurer = rememberTextMeasurer()
+    val labelStyle = TextStyle(
+        color = Color.White,
+        fontSize = 12.sp,
+        shadow = Shadow(Color.Black, Offset(0f, 1f), 3f),
+    )
+    val focusLabel = textMeasurer.measure(stringResource(R.string.camera_focus_point_label), labelStyle)
+    val meteringLabel = textMeasurer.measure(stringResource(R.string.camera_metering_point_label), labelStyle)
     
     // 透明度动画
     val alpha by animateFloatAsState(
         targetValue = when {
+            isSeparated -> 1f
             isFocusing -> 1f
             source == FocusPointSource.EYE && position != null -> 0.9f
             isFocusLocked && focusSuccess != false -> 0.9f
@@ -82,6 +117,86 @@ fun FocusIndicator(
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             Canvas(
                 modifier = Modifier.fillMaxSize()
+                    .pointerInput(canMoveMeteringPoint, source, position != null) {
+                        if (!canMoveMeteringPoint || source != FocusPointSource.MANUAL || position == null) {
+                            return@pointerInput
+                        }
+                        val hitRadius = 24.dp.toPx()
+                        val circleRadius = 11.dp.toPx()
+                        val focusHalfSize = 30.dp.toPx()
+                        val focusHitHalfSize = 38.dp.toPx()
+                        val mergeRadius = 16.dp.toPx()
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            val point = currentMeteringPosition ?: return@awaitEachGesture
+                            val focus = currentFocusPosition ?: return@awaitEachGesture
+                            val meteringCenter = Offset(point.first * size.width, point.second * size.height)
+                            val focusCenter = Offset(focus.first * size.width, focus.second * size.height)
+                            val meteringDistance = (down.position - meteringCenter).getDistance()
+                            val focusDelta = down.position - focusCenter
+                            val hitsMetering = meteringDistance <= hitRadius
+                            val hitsFocus = currentIsSeparated &&
+                                abs(focusDelta.x) <= focusHitHalfSize && abs(focusDelta.y) <= focusHitHalfSize
+                            if (!hitsMetering && !hitsFocus) return@awaitEachGesture
+                            // 命中范围重叠时优先圈本身，其余选择较近的标记；一次手势只拖动一个目标。
+                            val draggingFocus = hitsFocus && (!hitsMetering ||
+                                (meteringDistance > circleRadius && focusDelta.getDistance() < meteringDistance))
+                            val center = if (draggingFocus) focusCenter else meteringCenter
+                            // 只在越过拖动阈值后消费事件，保留原有点按与长按锁焦。
+                            val start = awaitTouchSlopOrCancellation(down.id) { change, _ ->
+                                if (currentEvent.changes.count { it.pressed } == 1) change.consume()
+                            }
+                                ?: return@awaitEachGesture
+                            val grabOffset = center - down.position
+                            var separatedDuringDrag = currentIsSeparated
+                            var mergedDuringDrag = false
+                            var lastFocusTarget: Offset? = null
+                            var lastFocusAspectRatio = 1f
+                            fun move(pointer: Offset) {
+                                if (mergedDuringDrag) return
+                                val width = size.width.toFloat()
+                                val height = size.height.toFloat()
+                                if (width <= 0f || height <= 0f) return
+                                val radius = if (draggingFocus) focusHalfSize else circleRadius
+                                val insetX = radius.coerceAtMost(width / 2f)
+                                val insetY = radius.coerceAtMost(height / 2f)
+                                val target = pointer + grabOffset
+                                val normalized = Offset(
+                                    target.x.coerceIn(insetX, width - insetX) / width,
+                                    target.y.coerceIn(insetY, height - insetY) / height,
+                                )
+                                if (draggingFocus) {
+                                    lastFocusTarget = normalized
+                                    lastFocusAspectRatio = width / height
+                                    currentOnFocusPointMove(normalized.x, normalized.y, width / height, false)
+                                } else {
+                                    val distanceToFocus = (target - focusCenter).getDistance()
+                                    if (separatedDuringDrag && distanceToFocus <= mergeRadius) {
+                                        mergedDuringDrag = true
+                                        currentOnMeteringPointMerge()
+                                    } else if (separatedDuringDrag || distanceToFocus > hitRadius) {
+                                        // 拉出距离大于吸附距离，防止中心附近反复分离、合并。
+                                        separatedDuringDrag = true
+                                        currentOnMeteringPointMove(normalized.x, normalized.y, width / height)
+                                    }
+                                }
+                            }
+                            try {
+                                move(start.position)
+                                drag(start.id) { change ->
+                                    if (currentEvent.changes.count { it.pressed } == 1) {
+                                        change.consume()
+                                        move(change.position)
+                                    }
+                                }
+                            } finally {
+                                // 包括多指接管或手势取消，均以最后接受的位置结束，避免留下未完成的 AF 状态。
+                                lastFocusTarget?.let { target ->
+                                    currentOnFocusPointMove(target.x, target.y, lastFocusAspectRatio, true)
+                                }
+                            }
+                        }
+                    }
             ) {
                 val x = displayPosition.first * size.width
                 val y = displayPosition.second * size.height
@@ -147,6 +262,37 @@ fun FocusIndicator(
                     end = Offset(x + halfSize, y + halfSize - cornerLength),
                     strokeWidth = strokeWidth
                 )
+
+                if (source == FocusPointSource.MANUAL && (canMoveMeteringPoint || isSeparated)) {
+                    val point = meteringPosition ?: displayPosition
+                    val center = Offset(point.first * size.width, point.second * size.height)
+                    val radius = 11.dp.toPx()
+                    drawCircle(
+                        color = Color.White.copy(alpha = alpha),
+                        radius = radius,
+                        center = center,
+                        style = Stroke(width = 1.5.dp.toPx()),
+                    )
+                    if (isSeparated) {
+                        fun labelTopLeft(center: Offset, radius: Float, width: Int, height: Int): Offset {
+                            val below = center.y + radius + 5.dp.toPx()
+                            val top = if (below + height <= size.height) below
+                                else center.y - radius - 5.dp.toPx() - height
+                            return Offset(
+                                (center.x - width / 2f).coerceIn(0f, (size.width - width).coerceAtLeast(0f)),
+                                top.coerceIn(0f, (size.height - height).coerceAtLeast(0f)),
+                            )
+                        }
+                        drawText(
+                            focusLabel,
+                            topLeft = labelTopLeft(Offset(x, y), halfSize, focusLabel.size.width, focusLabel.size.height),
+                        )
+                        drawText(
+                            meteringLabel,
+                            topLeft = labelTopLeft(center, radius, meteringLabel.size.width, meteringLabel.size.height),
+                        )
+                    }
+                }
             }
 
             if (source == FocusPointSource.MANUAL && isFocusLocked && position != null) {

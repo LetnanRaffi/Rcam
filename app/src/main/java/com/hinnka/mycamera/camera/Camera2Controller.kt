@@ -304,6 +304,7 @@ class Camera2Controller(private val context: Context) {
     private var isFlashSupported = false
     private var maxAfRegions = 0
     private var maxAeRegions = 0
+    private var pointMeteringViewAspectRatio: Float? = null
     private var availableAfModes: IntArray = intArrayOf()
     private var availableEdgeModes: IntArray = intArrayOf()
     private var availableNoiseReductionModes: IntArray = intArrayOf()
@@ -1191,8 +1192,9 @@ class Camera2Controller(private val context: Context) {
                 }
             }
 
-            // 场景变化检测：对焦锁定后持续监测曝光变化和焦距跳变
-            if (_state.value.isAutoFocus && isFocusLockedWaitingForSceneChange) {
+            // 独立测光会主动改变曝光，期间保留用户选定的 AF 点，直到重新点按或解锁。
+            // 其余状态在对焦后持续监测曝光变化和焦距跳变。
+            if (_state.value.isAutoFocus && isFocusLockedWaitingForSceneChange && _state.value.meteringPoint == null) {
                 // 对焦锁定后前几帧镜头还在微调，跳过不检测
                 if (focusLockSettleFrames > 0) {
                     focusLockSettleFrames--
@@ -2753,6 +2755,7 @@ class Camera2Controller(private val context: Context) {
                         },
                         minimumFocusDistance = minimumFocusDistance,
                         supportsPointAutoFocus = supportsPointAutoFocus,
+                        supportsPointMetering = maxAeRegions > 0,
                     )
                 }
                 refreshHyperfocalFocusDistanceIfEnabled(updatePreview = false)
@@ -2979,6 +2982,11 @@ class Camera2Controller(private val context: Context) {
     }
 
     fun calculateAutoMetering(totalWeight: Double, weightedSumLuminance: Double) {
+        val handler = cameraHandler
+        if (handler != null && Looper.myLooper() != handler.looper) {
+            handler.post { calculateAutoMetering(totalWeight, weightedSumLuminance) }
+            return
+        }
         val currentState = _state.value
         if (!currentState.isAutoExposure && (currentState.isIsoAuto || currentState.isShutterSpeedAuto)) {
 
@@ -5872,7 +5880,12 @@ class Camera2Controller(private val context: Context) {
      * 设置测光模式
      */
     fun setMeteringMode(mode: MeteringMode) {
-        _state.value = _state.value.copy(meteringMode = mode)
+        val handler = cameraHandler
+        if (handler != null && Looper.myLooper() != handler.looper) {
+            handler.post { setMeteringMode(mode) }
+            return
+        }
+        _state.value = _state.value.copy(meteringMode = mode, meteringPoint = null)
         if (mode == MeteringMode.HIGHLIGHT_PRIORITY) {
             highlightPointInitialized = false
             lastSentHighlightPointX = -1f
@@ -5888,6 +5901,11 @@ class Camera2Controller(private val context: Context) {
      * 使用 EMA 平滑防止 AE 频繁跳动
      */
     fun updateHighlightPoint(x: Float, y: Float) {
+        val handler = cameraHandler
+        if (handler != null && Looper.myLooper() != handler.looper) {
+            handler.post { updateHighlightPoint(x, y) }
+            return
+        }
         highlightPointX = x
         highlightPointY = y
         if (!highlightPointInitialized) {
@@ -5899,7 +5917,7 @@ class Camera2Controller(private val context: Context) {
             highlightPointSmoothedX = (alpha * x + (1 - alpha) * highlightPointSmoothedX).toFloat()
             highlightPointSmoothedY = (alpha * y + (1 - alpha) * highlightPointSmoothedY).toFloat()
         }
-        if (_state.value.meteringMode == MeteringMode.HIGHLIGHT_PRIORITY) {
+        if (_state.value.effectiveMeteringMode == MeteringMode.HIGHLIGHT_PRIORITY) {
             // 计算当前平滑点与上次发送点的位移距离
             val dist = hypot(
                 highlightPointSmoothedX.toDouble() - lastSentHighlightPointX,
@@ -5927,79 +5945,111 @@ class Camera2Controller(private val context: Context) {
      */
     private fun applyMeteringRegions() {
         val builder = previewRequestBuilder ?: return
-        val mode = _state.value.meteringMode
-
+        val currentState = _state.value
+        val mode = currentState.effectiveMeteringMode
         if (mode == MeteringMode.SYSTEM_DEFAULT) {
             clearCustomAeRegions(builder)
             return
         }
-
         if (maxAeRegions <= 0) return
-        val characteristics = getActiveOpenCameraCharacteristics() ?: return
-        val activeRect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
-
-        if (mode == MeteringMode.AVERAGE) {
-            val fullRegion = MeteringRectangle(activeRect, MeteringRectangle.METERING_WEIGHT_MAX)
-            builder.set(CaptureRequest.CONTROL_AE_REGIONS, arrayOf(fullRegion))
-            return
-        }
-
         try {
-            val sensorOrientation = getSensorOrientation()
-            val lensFacing = getLensFacing()
-
-            // 选择测光坐标：高光优先使用最亮区域，其他模式使用对焦点或画面中心
-            val normX: Float
-            val normY: Float
-            if (mode == MeteringMode.HIGHLIGHT_PRIORITY && highlightPointInitialized) {
-                normX = highlightPointSmoothedX
-                normY = highlightPointSmoothedY
+            val point = if (mode == MeteringMode.HIGHLIGHT_PRIORITY && highlightPointInitialized) {
+                highlightPointSmoothedX to highlightPointSmoothedY
             } else {
-                val focus = _state.value.focusPoint
-                normX = focus?.first ?: 0.5f
-                normY = focus?.second ?: 0.5f
+                currentState.meteringReferencePoint ?: (0.5f to 0.5f)
             }
-
-            val (sensorX, sensorY) = when (sensorOrientation) {
-                0 -> Pair(normX, normY)
-                90 -> Pair(normY, 1 - normX)
-                180 -> Pair(1 - normX, 1 - normY)
-                270 -> Pair(1 - normY, normX)
-                else -> Pair(normX, normY)
-            }
-            val (finalX, finalY) = if (lensFacing == CameraCharacteristics.LENS_FACING_FRONT) {
-                Pair(1 - sensorX, sensorY)
+            val mapping = mapPreviewMeteringPoint(point.first, point.second, pointMeteringViewAspectRatio)
+                ?: return
+            val rect = if (mode == MeteringMode.AVERAGE) {
+                mapping.visibleRegion
             } else {
-                Pair(sensorX, sensorY)
+                val fraction = when (mode) {
+                    MeteringMode.SPOT -> SPOT_AE_REGION_FRACTION
+                    MeteringMode.CENTER_WEIGHTED -> CENTER_WEIGHTED_AE_REGION_FRACTION
+                    MeteringMode.HIGHLIGHT_PRIORITY -> HIGHLIGHT_AE_REGION_FRACTION
+                }
+                PreviewMeteringMapper.buildCenteredRegion(mapping, fraction)
             }
-
-            val centerX = (finalX * activeRect.width()).toInt()
-            val centerY = (finalY * activeRect.height()).toInt()
-            val regionSizeFraction = when (mode) {
-                MeteringMode.SPOT -> 0.03f
-                MeteringMode.CENTER_WEIGHTED -> 0.2f
-                MeteringMode.HIGHLIGHT_PRIORITY -> 0.08f
-                MeteringMode.SYSTEM_DEFAULT,
-                MeteringMode.AVERAGE -> return
-            }
-            val regionSize = (activeRect.width() * regionSizeFraction).toInt()
-
-            val rect = android.graphics.Rect(
-                (centerX - regionSize).coerceAtLeast(0),
-                (centerY - regionSize).coerceAtLeast(0),
-                (centerX + regionSize).coerceAtMost(activeRect.width()),
-                (centerY + regionSize).coerceAtMost(activeRect.height())
-            )
             builder.set(
                 CaptureRequest.CONTROL_AE_REGIONS,
-                arrayOf(MeteringRectangle(
-                    rect,
-                    MeteringRectangle.METERING_WEIGHT_MAX
-                ))
+                arrayOf(MeteringRectangle(rect.toAndroidRect(), MeteringRectangle.METERING_WEIGHT_MAX))
             )
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to apply metering regions", e)
         }
+    }
+
+    // AF 和 AE 共享预览裁切、前摄镜像和变焦坐标映射。
+    private fun mapPreviewMeteringPoint(
+        normX: Float,
+        normY: Float,
+        previewViewAspectRatio: Float?,
+    ): PreviewMeteringMapping? {
+        val builder = previewRequestBuilder ?: return null
+        val openCameraId = getActiveOpenCameraId().takeIf { it.isNotEmpty() } ?: return null
+        val characteristics = resolveZoomRequestCharacteristics(openCameraId)
+        val activeRect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return null
+        val zoomRatioRange = characteristics.readMetadataOrNull(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)
+        val zoomMode = if (shouldUseControlZoomRatio(zoomRatioRange)) {
+            PreviewMeteringZoomMode.POST_ZOOM_ACTIVE_ARRAY
+        } else {
+            PreviewMeteringZoomMode.SCALER_CROP_REGION
+        }
+        val requestedScalerCrop = if (zoomMode == PreviewMeteringZoomMode.SCALER_CROP_REGION) {
+            builder.get(CaptureRequest.SCALER_CROP_REGION)
+                ?: buildCenteredCropRegion(activeRect, _state.value.zoomRatio)
+        } else {
+            null
+        }
+        return PreviewMeteringMapper.mapPoint(
+            normalizedX = normX,
+            normalizedY = normY,
+            activeArray = activeRect.toCameraCoordinateRect(),
+            scalerCropRegion = requestedScalerCrop?.toCameraCoordinateRect(),
+            zoomMode = zoomMode,
+            previewViewAspectRatio = previewViewAspectRatio?.takeIf { it.isFinite() && it > 0f }
+                ?: _state.value.getPreviewAspectRatio(),
+            sensorOrientationDegrees = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION)
+                ?: getSensorOrientation(),
+            isFrontFacing = (characteristics.get(CameraCharacteristics.LENS_FACING) ?: getLensFacing()) ==
+                CameraCharacteristics.LENS_FACING_FRONT,
+        )
+    }
+
+    /** 拖动测光圈仅更新 AE，保留原有 AF 区域与镜头位置。 */
+    fun moveMeteringPoint(normX: Float, normY: Float, viewAspectRatio: Float) {
+        val handler = cameraHandler
+        if (handler != null && Looper.myLooper() != handler.looper) {
+            handler.post { moveMeteringPoint(normX, normY, viewAspectRatio) }
+            return
+        }
+        val currentState = _state.value
+        if (!normX.isFinite() || !normY.isFinite() || !viewAspectRatio.isFinite() || viewAspectRatio <= 0f) return
+        if (isCaptureFocusFrozen || currentState.isCapturing || !currentState.supportsPointMetering) return
+        if (previewRequestBuilder == null || currentState.focusPoint == null ||
+            currentState.focusPointSource != FocusPointSource.MANUAL) return
+        val point = normX.coerceIn(0f, 1f) to normY.coerceIn(0f, 1f)
+        pointMeteringViewAspectRatio = viewAspectRatio
+        _state.value = currentState.copy(meteringPoint = point)
+        if (currentState.meteringPoint == null) {
+            PLog.d(TAG, "Separate metering point: focus=${currentState.focusPoint} metering=$point")
+        }
+        applyMeteringRegions()
+        updatePreview()
+    }
+
+    fun mergeMeteringPoint() {
+        val handler = cameraHandler
+        if (handler != null && Looper.myLooper() != handler.looper) {
+            handler.post { mergeMeteringPoint() }
+            return
+        }
+        val currentState = _state.value
+        if (isCaptureFocusFrozen || currentState.isCapturing || currentState.meteringPoint == null) return
+        _state.value = currentState.copy(meteringPoint = null)
+        applyMeteringRegions()
+        updatePreview()
+        PLog.d(TAG, "Merge metering point into focus=${currentState.focusPoint}")
     }
 
     private fun clearCustomAeRegions(builder: CaptureRequest.Builder) {
@@ -6211,6 +6261,9 @@ class Camera2Controller(private val context: Context) {
                     zoomRatioRange = zoomRatioRange,
                     resetCropAtUnitZoom = true
                 )
+            }
+            if (_state.value.meteringPoint != null) {
+                applyMeteringRegions()
             }
             if (cameraDevice != null && captureSession != null) {
                 updatePreview()
@@ -6518,6 +6571,7 @@ class Camera2Controller(private val context: Context) {
     }
 
     private fun clearPointFocusState() {
+        pointMeteringViewAspectRatio = null
         isFocusLockedWaitingForSceneChange = false
         sceneChangeFrameCount = 0
         focusLockedReferenceIso = 0
@@ -6527,6 +6581,7 @@ class Camera2Controller(private val context: Context) {
         eyeTargetLastSeenElapsedMs = 0L
         _state.value = _state.value.copy(
             focusPoint = null,
+            meteringPoint = null,
             focusPointSource = FocusPointSource.MANUAL,
             isFocusLocked = false,
             isFocusing = false,
@@ -6559,12 +6614,35 @@ class Camera2Controller(private val context: Context) {
         )
     }
 
+    /** 拖动中更新 AF 区域，松手后扫描一次；整个过程保持独立 AE 区域。 */
+    fun moveFocusPoint(normX: Float, normY: Float, viewAspectRatio: Float, finished: Boolean) {
+        val handler = cameraHandler
+        if (handler != null && Looper.myLooper() != handler.looper) {
+            handler.post { moveFocusPoint(normX, normY, viewAspectRatio, finished) }
+            return
+        }
+        val currentState = _state.value
+        if (currentState.meteringPoint == null || currentState.focusPointSource != FocusPointSource.MANUAL) return
+        if (!normX.isFinite() || !normY.isFinite() || !viewAspectRatio.isFinite() || viewAspectRatio <= 0f) return
+        focusOnNormalizedPoint(
+            normX = normX,
+            normY = normY,
+            source = FocusPointSource.MANUAL,
+            lockFocus = currentState.isFocusLocked,
+            previewViewAspectRatio = viewAspectRatio,
+            preserveMeteringPoint = true,
+            triggerFocus = finished,
+        )
+    }
+
     fun focusOnNormalizedPoint(
         normX: Float,
         normY: Float,
         source: FocusPointSource,
         lockFocus: Boolean = false,
         previewViewAspectRatio: Float? = null,
+        preserveMeteringPoint: Boolean = false,
+        triggerFocus: Boolean = true,
     ) {
         val handler = cameraHandler
         if (handler != null && Looper.myLooper() != handler.looper) {
@@ -6575,6 +6653,8 @@ class Camera2Controller(private val context: Context) {
                     source = source,
                     lockFocus = lockFocus,
                     previewViewAspectRatio = previewViewAspectRatio,
+                    preserveMeteringPoint = preserveMeteringPoint,
+                    triggerFocus = triggerFocus,
                 )
             }
             return
@@ -6616,48 +6696,20 @@ class Camera2Controller(private val context: Context) {
 
         try {
             val builder = previewRequestBuilder ?: return
-            val currentState = _state.value
-            val characteristics = resolveZoomRequestCharacteristics(openCameraId)
-            val activeRect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
-            val sensorOrientation =
-                characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: getSensorOrientation()
-            val lensFacing =
-                characteristics.get(CameraCharacteristics.LENS_FACING) ?: getLensFacing()
-            val zoomRatioRange = characteristics.readMetadataOrNull(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)
-            val zoomMode = if (shouldUseControlZoomRatio(zoomRatioRange)) {
-                PreviewMeteringZoomMode.POST_ZOOM_ACTIVE_ARRAY
-            } else {
-                PreviewMeteringZoomMode.SCALER_CROP_REGION
-            }
-            val requestedScalerCrop = if (zoomMode == PreviewMeteringZoomMode.SCALER_CROP_REGION) {
-                builder.get(CaptureRequest.SCALER_CROP_REGION)
-                    ?: buildCenteredCropRegion(activeRect, currentState.zoomRatio)
-            } else {
-                null
-            }
-
-            // 计算归一化坐标（0-1）
             val normalizedX = normX.coerceIn(0f, 1f)
             val normalizedY = normY.coerceIn(0f, 1f)
-            val mapping = PreviewMeteringMapper.mapPoint(
-                normalizedX = normalizedX,
-                normalizedY = normalizedY,
-                activeArray = activeRect.toCameraCoordinateRect(),
-                scalerCropRegion = requestedScalerCrop?.toCameraCoordinateRect(),
-                zoomMode = zoomMode,
-                previewViewAspectRatio = previewViewAspectRatio
-                    ?.takeIf { it.isFinite() && it > 0f }
-                    ?: currentState.getPreviewAspectRatio(),
-                sensorOrientationDegrees = sensorOrientation,
-                isFrontFacing = lensFacing == CameraCharacteristics.LENS_FACING_FRONT,
-            ) ?: return
+            val mapping = mapPreviewMeteringPoint(normalizedX, normalizedY, previewViewAspectRatio) ?: return
+            if (source == FocusPointSource.MANUAL && !preserveMeteringPoint) {
+                pointMeteringViewAspectRatio = previewViewAspectRatio
+            }
 
             // 存储UI坐标用于显示对焦框
             _state.value = _state.value.copy(
                 focusPoint = Pair(normalizedX, normalizedY),
+                meteringPoint = if (preserveMeteringPoint) _state.value.meteringPoint else null,
                 focusPointSource = source,
                 isFocusLocked = lockFocus,
-                isFocusing = true,
+                isFocusing = triggerFocus,
                 focusSuccess = null
             )
             // AF 区域保持为可见画面的 10%，避免 SCALER_CROP_REGION 变焦后区域相对画面膨胀。
@@ -6668,61 +6720,31 @@ class Camera2Controller(private val context: Context) {
             ).toAndroidRect()
             val afRegion = MeteringRectangle(afRect, MeteringRectangle.METERING_WEIGHT_MAX)
 
-            // 2. AE 区域：根据测光模式决定；系统默认模式不随点按写入 AE 区域
-            val meteringMode = _state.value.meteringMode
-            val aeRegion = when (meteringMode) {
-                MeteringMode.SYSTEM_DEFAULT -> null
-                MeteringMode.AVERAGE -> {
-                    // 平均测光模式下，点击屏幕仅改变对焦点，测光区域强制保持全屏平均
-                    MeteringRectangle(
-                        mapping.visibleRegion.toAndroidRect(),
-                        MeteringRectangle.METERING_WEIGHT_MAX,
-                    )
-                }
-                MeteringMode.SPOT,
-                MeteringMode.CENTER_WEIGHTED,
-                MeteringMode.HIGHLIGHT_PRIORITY -> {
-                    val aeRegionFraction = when (meteringMode) {
-                        MeteringMode.SPOT -> SPOT_AE_REGION_FRACTION
-                        MeteringMode.CENTER_WEIGHTED -> CENTER_WEIGHTED_AE_REGION_FRACTION
-                        MeteringMode.HIGHLIGHT_PRIORITY -> HIGHLIGHT_AE_REGION_FRACTION
-                    }
-                    MeteringRectangle(
-                        PreviewMeteringMapper.buildCenteredRegion(
-                            mapping = mapping,
-                            widthFraction = aeRegionFraction,
-                            heightFraction = aeRegionFraction,
-                        ).toAndroidRect(),
-                        MeteringRectangle.METERING_WEIGHT_MAX,
-                    )
-                }
+            if (triggerFocus) {
+                PLog.d(
+                    TAG,
+                    "Focus mapping: ui=($normalizedX,$normalizedY) " +
+                        "source=$source preserveMetering=$preserveMeteringPoint " +
+                        "coordinateCamera=${activeOutputPhysicalCameraId ?: openCameraId} " +
+                        "requestZoom=${builder.get(CaptureRequest.CONTROL_ZOOM_RATIO)} " +
+                        "requestCrop=${builder.get(CaptureRequest.SCALER_CROP_REGION)} " +
+                        "visible=${mapping.visibleRegion} center=(${mapping.centerX},${mapping.centerY}) " +
+                        "af=$afRect metering=${_state.value.effectiveMeteringMode}"
+                )
             }
-
-            PLog.d(
-                TAG,
-                "Focus mapping: ui=($normalizedX,$normalizedY) " +
-                    "source=$source " +
-                    "coordinateCamera=${activeOutputPhysicalCameraId ?: openCameraId} " +
-                    "zoomMode=$zoomMode requestZoom=${builder.get(CaptureRequest.CONTROL_ZOOM_RATIO)} " +
-                    "requestCrop=$requestedScalerCrop active=$activeRect " +
-                    "visible=${mapping.visibleRegion} center=(${mapping.centerX},${mapping.centerY}) " +
-                    "af=$afRect metering=$meteringMode"
-            )
 
             if (maxAfRegions > 0) {
                 builder.set(CaptureRequest.CONTROL_AF_REGIONS, arrayOf(afRegion))
             }
             // 人眼跟踪只接管 AF，不移动用户当前的测光区域。
-            if (source == FocusPointSource.MANUAL) {
-                if (meteringMode == MeteringMode.SYSTEM_DEFAULT) {
-                    clearCustomAeRegions(builder)
-                } else if (maxAeRegions > 0 && aeRegion != null) {
-                    builder.set(CaptureRequest.CONTROL_AE_REGIONS, arrayOf(aeRegion))
-                }
+            if (source == FocusPointSource.MANUAL && !preserveMeteringPoint) {
+                applyMeteringRegions()
             }
             val afMode = CaptureRequest.CONTROL_AF_MODE_AUTO
             _state.value = _state.value.copy(currentAfMode = afMode)
-            if (!submitOneShotAfTrigger(afMode, "point focus")) {
+            if (!triggerFocus) {
+                updatePreview()
+            } else if (!submitOneShotAfTrigger(afMode, "point focus")) {
                 PLog.w(TAG, "Unable to submit point-focus AF trigger")
                 _state.value = _state.value.copy(isFocusing = false, focusSuccess = false)
             }

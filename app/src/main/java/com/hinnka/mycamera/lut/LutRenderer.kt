@@ -360,7 +360,7 @@ class LutRenderer(context: Context) : GLSurfaceView.Renderer {
     var baselineColorRecipeEnabled: Boolean = false
 
     @Volatile
-    var focusPoint: PointF? = null
+    var meteringPoint: PointF? = null
 
     @Volatile
     var meteringMode: MeteringMode = MeteringMode.SYSTEM_DEFAULT
@@ -2792,16 +2792,16 @@ class LutRenderer(context: Context) : GLSurfaceView.Renderer {
         } else {
             null
         }
-        val currentFocus = focusPoint?.let { PointF(it.x, it.y) }
+        val currentMeteringPoint = meteringPoint?.let { PointF(it.x, it.y) }
         val currentMode = meteringMode
 
         val now = System.currentTimeMillis()
         if (now - lastRunMeteringTime < 100) {
-            dispatchMeteringCalculation(completedBytes, currentFocus, currentMode)
+            dispatchMeteringCalculation(completedBytes, currentMeteringPoint, currentMode)
             return
         }
         if (!isPixelPackBufferWritable(meteringPboFences, writeIndex)) {
-            dispatchMeteringCalculation(completedBytes, currentFocus, currentMode)
+            dispatchMeteringCalculation(completedBytes, currentMeteringPoint, currentMode)
             return
         }
         lastRunMeteringTime = now
@@ -2844,7 +2844,7 @@ class LutRenderer(context: Context) : GLSurfaceView.Renderer {
             restorePixelReadbackState()
         }
 
-        dispatchMeteringCalculation(completedBytes, currentFocus, currentMode)
+        dispatchMeteringCalculation(completedBytes, currentMeteringPoint, currentMode)
     }
 
     private fun ensurePixelPackPbos(pboIds: IntArray, pixelSize: Int): Boolean {

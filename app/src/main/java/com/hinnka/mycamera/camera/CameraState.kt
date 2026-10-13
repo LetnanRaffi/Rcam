@@ -318,6 +318,9 @@ data class CameraState(
     val minimumFocusDistance: Float = 0f, // 最小对焦距离
     val supportsPointAutoFocus: Boolean = false,
     val focusPoint: Pair<Float, Float>? = null, // normalized coordinates (0-1)
+    // 非空表示用户拖出了独立测光点；为空时测光遵循所选模式和对焦点。
+    val meteringPoint: Pair<Float, Float>? = null,
+    val supportsPointMetering: Boolean = false,
     val focusPointSource: FocusPointSource = FocusPointSource.MANUAL,
     val isFocusLocked: Boolean = false,
     val isFocusing: Boolean = false,
@@ -401,6 +404,12 @@ data class CameraState(
     val videoCapabilities: VideoCapabilities = VideoCapabilities(),
     val videoRecordingState: VideoRecordingState = VideoRecordingState(),
 ) {
+    val effectiveMeteringMode: MeteringMode
+        get() = if (meteringPoint != null) MeteringMode.SPOT else meteringMode
+
+    val meteringReferencePoint: Pair<Float, Float>?
+        get() = meteringPoint ?: focusPoint?.takeIf { focusPointSource == FocusPointSource.MANUAL }
+
     companion object {
         const val MAX_PHOTO_PREVIEW_SHUTTER_SPEED_NS = 1_000_000_000L / 15
         const val MAX_VIDEO_MANUAL_SHUTTER_SPEED_NS = 1_000_000_000L / 6

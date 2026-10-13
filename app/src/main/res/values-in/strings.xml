@@ -355,4 +355,6 @@
     <string name="settings_raw_leica_color_matrix_description">Pilih matriks warna perangkat pengambilan gambar atau M9 untuk kalibrasi warna RAW.</string>
     <string name="settings_raw_leica_color_matrix_device">Default</string>
     <string name="settings_raw_leica_color_matrix_m9">M9</string>
+    <string name="camera_focus_point_label">Fokus</string>
+    <string name="camera_metering_point_label">Pengukuran</string>
 </resources>

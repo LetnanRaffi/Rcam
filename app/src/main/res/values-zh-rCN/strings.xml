@@ -1361,4 +1361,6 @@
     <string name="settings_raw_leica_color_matrix_description">选择使用拍摄设备或 M9 的色彩矩阵校准 RAW 色彩。</string>
     <string name="settings_raw_leica_color_matrix_device">默认</string>
     <string name="settings_raw_leica_color_matrix_m9">M9</string>
+    <string name="camera_focus_point_label">对焦框</string>
+    <string name="camera_metering_point_label">测光点</string>
 </resources>
