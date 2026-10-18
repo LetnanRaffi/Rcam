@@ -12,6 +12,7 @@ internal object LutShaderMappings {
         return when (colorSpace) {
             ColorSpace.SRGB -> 0
             ColorSpace.DCI_P3 -> 1
+            ColorSpace.DisplayP3 -> 1
             ColorSpace.BT2020 -> 2
             ColorSpace.ARRI4 -> 3
             ColorSpace.AppleLog2 -> 4

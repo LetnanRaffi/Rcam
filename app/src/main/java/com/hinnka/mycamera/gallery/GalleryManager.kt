@@ -71,6 +71,7 @@ import com.hinnka.mycamera.raw.RawSceneExposureMath
 import com.hinnka.mycamera.raw.RawPhotonHdrMetadata
 import com.hinnka.mycamera.raw.RawProfileToneMapMode
 import com.hinnka.mycamera.raw.SpectralFilmTuning
+import com.hinnka.mycamera.raw.fotufilm.FotufilmDocumentStorage
 import com.hinnka.mycamera.raw.RawToneMappingParameters
 import com.hinnka.mycamera.raw.RawWhiteLevelCorrection
 import com.hinnka.mycamera.preview.PortraitMaskSnapshot
@@ -282,6 +283,9 @@ object GalleryManager {
                 preferences?.rawSpectralFilmTuningsByStock?.get(spectralFilmStock)
                     ?: SpectralFilmTuning.DEFAULT
                 ).normalized()
+            val rawRenderingEngine = preferences?.rawRenderingEngine ?: RawRenderingEngine.AdobeCurve
+            val fotufilmDocument = FotufilmDocumentStorage.decode(preferences?.rawFotufilmDocument, "preferences")
+                ?: if (rawRenderingEngine == RawRenderingEngine.Fotufilm) FotufilmDocumentStorage.defaultDocument() else null
             val resolvedDateTaken = dateTaken
                 ?: baseMetadata.dateTaken
                 ?: System.currentTimeMillis()
@@ -314,7 +318,7 @@ object GalleryManager {
                 rawCustomBlackLevel = 0f,
                 rawWhiteLevelMode = RawWhiteLevelCorrection.MODE_DEFAULT,
                 rawCfaCorrectionMode = RawCfaCorrection.MODE_DEFAULT,
-                rawRenderingEngine = preferences?.rawRenderingEngine ?: RawRenderingEngine.AdobeCurve,
+                rawRenderingEngine = rawRenderingEngine,
                 rawToneMappingParameters = rawToneMappingParameters,
                 dateTaken = resolvedDateTaken,
                 rotation = resolvedRotation,
@@ -329,6 +333,7 @@ object GalleryManager {
                 spectralFilmCDensityGain = spectralFilmTuning.cDensityGain,
                 spectralFilmMDensityGain = spectralFilmTuning.mDensityGain,
                 spectralFilmYDensityGain = spectralFilmTuning.yDensityGain,
+                fotufilmDocument = FotufilmDocumentStorage.encode(fotufilmDocument),
             )
 
             saveMetadata(context, photoId, metadata)
@@ -2445,6 +2450,7 @@ object GalleryManager {
                     mDensityGain = updatedMetadata.spectralFilmMDensityGain,
                     yDensityGain = updatedMetadata.spectralFilmYDensityGain,
                 ),
+                fotufilmDocument = FotufilmDocumentStorage.decode(updatedMetadata.fotufilmDocument, "photo metadata"),
                 onMetadata = { raw -> updatedMetadata = updatedMetadata.merge(raw) },
             )
 
@@ -2542,6 +2548,7 @@ object GalleryManager {
                         mDensityGain = updatedMetadata.spectralFilmMDensityGain,
                         yDensityGain = updatedMetadata.spectralFilmYDensityGain,
                     ),
+                    fotufilmDocument = FotufilmDocumentStorage.decode(updatedMetadata.fotufilmDocument, "photo metadata"),
                     onMetadata = { raw -> updatedMetadata = updatedMetadata.merge(raw) },
                 )
             } else {
@@ -3802,6 +3809,7 @@ object GalleryManager {
                         mDensityGain = updatedMetadata.spectralFilmMDensityGain,
                         yDensityGain = updatedMetadata.spectralFilmYDensityGain,
                     ),
+                    fotufilmDocument = FotufilmDocumentStorage.decode(updatedMetadata.fotufilmDocument, "photo metadata"),
                     onMetadata = { raw -> updatedMetadata = updatedMetadata.merge(raw) },
                 )
 
@@ -3897,6 +3905,7 @@ object GalleryManager {
                             mDensityGain = updatedMetadata.spectralFilmMDensityGain,
                             yDensityGain = updatedMetadata.spectralFilmYDensityGain,
                         ),
+                        fotufilmDocument = FotufilmDocumentStorage.decode(updatedMetadata.fotufilmDocument, "photo metadata"),
                         onMetadata = { raw -> updatedMetadata = updatedMetadata.merge(raw) },
                     )
                     val renderCompletedMs = System.currentTimeMillis()
@@ -4183,6 +4192,7 @@ object GalleryManager {
                 mDensityGain = updatedMetadata.spectralFilmMDensityGain,
                 yDensityGain = updatedMetadata.spectralFilmYDensityGain
             ),
+            fotufilmDocument = FotufilmDocumentStorage.decode(updatedMetadata.fotufilmDocument, "photo metadata"),
             onMetadata = { raw ->
                 updatedMetadata = updatedMetadata.merge(raw)
             }
@@ -5645,6 +5655,7 @@ object GalleryManager {
                                 mDensityGain = updatedMetadata.spectralFilmMDensityGain,
                                 yDensityGain = updatedMetadata.spectralFilmYDensityGain
                             ),
+                            fotufilmDocument = FotufilmDocumentStorage.decode(updatedMetadata.fotufilmDocument, "photo metadata"),
                             onMetadata = { raw ->
                                 updatedMetadata = updatedMetadata.merge(raw)
                             }
@@ -5839,6 +5850,7 @@ object GalleryManager {
                         mDensityGain = updatedMetadata?.spectralFilmMDensityGain ?: 1f,
                         yDensityGain = updatedMetadata?.spectralFilmYDensityGain ?: 1f
                     ),
+                    fotufilmDocument = FotufilmDocumentStorage.decode(updatedMetadata?.fotufilmDocument, "photo metadata"),
                     onMetadata = { raw ->
                         updatedMetadata = updatedMetadata?.merge(raw) ?: MediaMetadata().merge(raw)
                     }

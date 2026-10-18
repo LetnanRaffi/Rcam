@@ -1,6 +1,7 @@
 package com.hinnka.mycamera.raw
 
 import android.content.Context
+import com.hinnka.mycamera.raw.fotufilm.FotufilmDocument
 
 /** Latest physical-camera color state. Value equality suppresses unchanged frame metadata. */
 data class RawEnginePreviewSource(
@@ -28,6 +29,7 @@ data class RawEnginePreviewSettings(
     val filmStock: String,
     val filmPrint: String,
     val filmTuning: SpectralFilmTuning,
+    val fotufilmDocument: FotufilmDocument? = null,
 )
 
 /** Immutable CPU solution. Matrices are row-major; the owning GL context uploads them. */
@@ -50,6 +52,10 @@ class RawEnginePreviewResolver(private val context: Context, val settings: RawEn
     private val spectral = if (engine == RawRenderingEngine.Spektrafilm) requireNotNull(
         SpectralFilmProfile.loadCombinedLut(context, settings.filmStock, settings.filmPrint, settings.filmTuning),
     ) { "Unable to load Spektrafilm preview stages" } else null
+    private val fotufilm = if (engine.isFotufilm) FotufilmRenderRequest(
+        context.applicationContext,
+        requireNotNull(settings.fotufilmDocument) { "Fotufilm preview needs a document" },
+    ) else null
     private val hncsManager = if (engine.isHncs) HncsProfileManager(context) else null
     private val canon = if (engine.isCanon) CanonProfile.createRenderPlan(context, tone.canonPictureStyle) else null
     private val leica = if (engine.isLeica) LeicaProfile.createRenderPlan(context) else null
@@ -136,6 +142,7 @@ class RawEnginePreviewResolver(private val context: Context, val settings: RawEn
                 outputTransform = RawToneMappingGl.computeWorkingToOutputTransform(engine.workingColorSpace, ColorSpace.SRGB),
                 dcpRenderPlan = profile, applyDcpHueSatMap = true, spectralFilmLut = spectral,
                 hncsRenderPlan = hncs, lumixRenderPlan = lumix, canonRenderPlan = canon, leicaRenderPlan = leica,
+                fotufilm = fotufilm,
             ),
         )
     }

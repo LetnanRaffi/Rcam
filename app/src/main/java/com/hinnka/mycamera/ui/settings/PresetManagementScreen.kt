@@ -430,7 +430,11 @@ private fun PresetManagementItem(
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     val rawRenderingEngine = RawRenderingEngine.fromPersistedName(preset.rawRenderingEngine)
                     PresetFeatureText(preset.aspectRatio.removePrefix("RATIO_").replace("_", ":"))
-                    if (rawRenderingEngine == RawRenderingEngine.Spektrafilm) PresetFeatureText("FILM")
+                    if (rawRenderingEngine == RawRenderingEngine.Spektrafilm ||
+                        rawRenderingEngine == RawRenderingEngine.Fotufilm
+                    ) {
+                        PresetFeatureText("FILM")
+                    }
                     if (preset.lutId != null) PresetFeatureText("LUT")
                     if (rawRenderingEngine == RawRenderingEngine.AdobeCurve && preset.hasRawDcpSelection()) {
                         PresetFeatureText("DCP")

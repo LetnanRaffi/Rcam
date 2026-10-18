@@ -131,7 +131,9 @@ fun PresetsPanel(
                         ) {
                             val rawRenderingEngine = RawRenderingEngine.fromPersistedName(preset.rawRenderingEngine)
                             FeatureBadge(text = AspectRatio.valueOf(preset.aspectRatio).getDisplayName())
-                            if (rawRenderingEngine == RawRenderingEngine.Spektrafilm) {
+                            if (rawRenderingEngine == RawRenderingEngine.Spektrafilm ||
+                                rawRenderingEngine == RawRenderingEngine.Fotufilm
+                            ) {
                                 FeatureBadge(text = "FILM")
                             }
                             if (rawRenderingEngine == RawRenderingEngine.AdobeCurve && preset.hasRawDcpSelection()) {

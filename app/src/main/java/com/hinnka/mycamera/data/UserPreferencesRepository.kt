@@ -285,6 +285,7 @@ data class UserPreferences(
     val deleteExported: Boolean = true,
     val rawSpectralFilmStock: String? = null,
     val rawSpectralFilmPrint: String? = null,
+    val rawFotufilmDocument: String? = null,
     val rawSpectralFilmTuningsByStock: Map<String, SpectralFilmTuning> = emptyMap(),
     val activeEffectParamsJson: String = "",
     val customPresetsJson: String = "",
@@ -349,6 +350,7 @@ data class CameraFeaturePreferencesUpdate(
     val rawWhitePointCorrection: PreferenceUpdateValue<Float>? = null,
     val rawSpectralFilmStock: PreferenceUpdateValue<String?>? = null,
     val rawSpectralFilmPrint: PreferenceUpdateValue<String?>? = null,
+    val rawFotufilmDocument: PreferenceUpdateValue<String?>? = null,
     val droMode: PreferenceUpdateValue<String>? = null,
     val rawBaselineLutId: PreferenceUpdateValue<String?>? = null,
     val activePresetId: PreferenceUpdateValue<String?>? = null
@@ -573,6 +575,7 @@ class UserPreferencesRepository(private val context: Context) {
         private val DELETE_EXPORTED = booleanPreferencesKey("delete_exported")
         private val RAW_SPECTRAL_FILM_STOCK_KEY = stringPreferencesKey("raw_spectral_film_stock")
         private val RAW_SPECTRAL_FILM_PRINT_KEY = stringPreferencesKey("raw_spectral_film_print")
+        private val RAW_FOTUFILM_DOCUMENT_KEY = stringPreferencesKey("raw_fotufilm_document")
         private val ACTIVE_EFFECT_PARAMS_JSON = stringPreferencesKey("active_effect_params_json")
         private val CUSTOM_PRESETS_JSON = stringPreferencesKey("custom_presets_json")
         private val ACTIVE_PRESET_ID = stringPreferencesKey("active_preset_id")
@@ -955,6 +958,7 @@ class UserPreferencesRepository(private val context: Context) {
                 deleteExported = preferences[DELETE_EXPORTED] ?: true,
                 rawSpectralFilmStock = preferences[RAW_SPECTRAL_FILM_STOCK_KEY],
                 rawSpectralFilmPrint = preferences[RAW_SPECTRAL_FILM_PRINT_KEY],
+                rawFotufilmDocument = preferences[RAW_FOTUFILM_DOCUMENT_KEY],
                 rawSpectralFilmTuningsByStock = parseSpectralFilmTunings(preferences[RAW_SPECTRAL_FILM_TUNINGS_BY_STOCK_KEY]),
                 activeEffectParamsJson = preferences[ACTIVE_EFFECT_PARAMS_JSON] ?: "",
                 customPresetsJson = preferences[CUSTOM_PRESETS_JSON] ?: "",
@@ -2595,6 +2599,16 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
+    suspend fun saveRawFotufilmDocument(documentJson: String?) {
+        context.dataStore.edit { preferences ->
+            if (documentJson != null) {
+                preferences[RAW_FOTUFILM_DOCUMENT_KEY] = documentJson
+            } else {
+                preferences.remove(RAW_FOTUFILM_DOCUMENT_KEY)
+            }
+        }
+    }
+
     suspend fun saveRawSpectralFilmTuning(filmStock: String, tuning: SpectralFilmTuning) {
         context.dataStore.edit { preferences ->
             val tunings = parseSpectralFilmTunings(preferences[RAW_SPECTRAL_FILM_TUNINGS_BY_STOCK_KEY]).toMutableMap()
@@ -2743,6 +2757,13 @@ class UserPreferencesRepository(private val context: Context) {
                     preferences[RAW_SPECTRAL_FILM_PRINT_KEY] = it.value
                 } else {
                     preferences.remove(RAW_SPECTRAL_FILM_PRINT_KEY)
+                }
+            }
+            update.rawFotufilmDocument?.let {
+                if (it.value != null) {
+                    preferences[RAW_FOTUFILM_DOCUMENT_KEY] = it.value
+                } else {
+                    preferences.remove(RAW_FOTUFILM_DOCUMENT_KEY)
                 }
             }
             update.droMode?.let {

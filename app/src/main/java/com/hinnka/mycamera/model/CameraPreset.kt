@@ -51,6 +51,7 @@ data class CameraPreset(
     val rawLeicaUseM9ColorMatrix: Boolean = false,
     val rawSpectralFilmStock: String? = null,
     val rawSpectralFilmPrint: String? = null,
+    val rawFotufilmDocument: String? = null,
     val rawDROMode: String = "OFF",
     // 专业模式基准色彩校正
     val rawBaselineLutId: String? = null,

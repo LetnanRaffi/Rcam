@@ -35,6 +35,7 @@ import com.hinnka.mycamera.raw.RawPhotonHdrMetadata
 import com.hinnka.mycamera.raw.RawNoiseProfileManager
 import com.hinnka.mycamera.raw.SpectralFilmTuning
 import com.hinnka.mycamera.utils.BitmapUtils
+import com.hinnka.mycamera.raw.fotufilm.FotufilmDocumentStorage
 import com.hinnka.mycamera.utils.PLog
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.Dispatchers
@@ -615,7 +616,8 @@ class PhotoProcessor(
                 cDensityGain = metadata.spectralFilmCDensityGain,
                 mDensityGain = metadata.spectralFilmMDensityGain,
                 yDensityGain = metadata.spectralFilmYDensityGain
-            )
+            ),
+            fotufilmDocument = FotufilmDocumentStorage.decode(metadata.fotufilmDocument, "photo metadata")
         ) ?: return@withContext null
         prepareUltraHdrSourceFromRawResult(
             context = context,
@@ -703,6 +705,7 @@ class PhotoProcessor(
                 mDensityGain = metadata.spectralFilmMDensityGain,
                 yDensityGain = metadata.spectralFilmYDensityGain
             ),
+            fotufilmDocument = FotufilmDocumentStorage.decode(metadata.fotufilmDocument, "photo metadata"),
             onMetadata = onRawMetadata
         )
 

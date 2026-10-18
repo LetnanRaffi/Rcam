@@ -42,6 +42,7 @@ import com.hinnka.mycamera.raw.RawSharpeningDefaults
 import com.hinnka.mycamera.raw.MeteringSystem
 import com.hinnka.mycamera.processor.DenoiseStrength
 import com.hinnka.mycamera.raw.SpectralFilmUiInfo
+import com.hinnka.mycamera.raw.fotufilm.FotufilmDocumentStorage
 import com.hinnka.mycamera.ui.components.FrameSelector
 import com.hinnka.mycamera.ui.components.RawBaselineColorCorrectionSelector
 import com.hinnka.mycamera.ui.components.LumixPhotoStyleSelector
@@ -158,6 +159,16 @@ fun PresetEditorScreen(
     var rawOppoMasterToneMap by remember { mutableStateOf(sourcePreset?.rawOppoMasterToneMap ?: false) }
     var rawSpectralFilmStock by remember { mutableStateOf(sourcePreset?.rawSpectralFilmStock ?: "kodak_portra_400") }
     var rawSpectralFilmPrint by remember { mutableStateOf(sourcePreset?.rawSpectralFilmPrint ?: "kodak_2383") }
+    var rawFotufilmDocument by remember {
+        mutableStateOf(
+            FotufilmDocumentStorage.decode(sourcePreset?.rawFotufilmDocument, "preset ${sourcePreset?.id}")
+                ?: if (RawRenderingEngine.fromPersistedName(sourcePreset?.rawRenderingEngine) == RawRenderingEngine.Fotufilm) {
+                    FotufilmDocumentStorage.defaultDocument()
+                } else {
+                    null
+                }
+        )
+    }
     var rawDROMode by remember { mutableStateOf(sourcePreset?.rawDROMode ?: "OFF") }
 
     // 专业模式基准色彩校正
@@ -203,6 +214,7 @@ fun PresetEditorScreen(
             rawLeicaUseM9ColorMatrix = rawLeicaUseM9ColorMatrix,
             rawSpectralFilmStock = rawSpectralFilmStock,
             rawSpectralFilmPrint = rawSpectralFilmPrint,
+            rawFotufilmDocument = FotufilmDocumentStorage.encode(rawFotufilmDocument),
             rawDROMode = rawDROMode,
             rawBaselineLutId = rawBaselineLutId,
             isBuiltIn = isBuiltInFlag
@@ -477,6 +489,7 @@ fun PresetEditorScreen(
                         RawRenderingEngine.Lumix -> stringResource(R.string.settings_raw_color_engine_lumix)
                         RawRenderingEngine.Canon -> stringResource(R.string.settings_raw_color_engine_canon)
                         RawRenderingEngine.Leica -> stringResource(R.string.settings_raw_color_engine_leica)
+                        RawRenderingEngine.Fotufilm -> stringResource(R.string.settings_raw_color_engine_fotufilm)
                         RawRenderingEngine.Hncs -> stringResource(
                             R.string.settings_raw_color_engine_hncs
                         )
@@ -494,6 +507,9 @@ fun PresetEditorScreen(
                             if (engine == RawRenderingEngine.Spektrafilm) {
                                 if (rawSpectralFilmStock.isBlank()) rawSpectralFilmStock = "kodak_portra_400"
                                 if (rawSpectralFilmPrint.isBlank()) rawSpectralFilmPrint = "kodak_2383"
+                            }
+                            if (engine == RawRenderingEngine.Fotufilm && rawFotufilmDocument == null) {
+                                rawFotufilmDocument = FotufilmDocumentStorage.defaultDocument()
                             }
                         }
                     }

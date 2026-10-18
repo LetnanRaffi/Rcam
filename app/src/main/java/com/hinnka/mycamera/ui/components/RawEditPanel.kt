@@ -52,6 +52,7 @@ import com.hinnka.mycamera.raw.RawNoiseProfileInfo
 import com.hinnka.mycamera.raw.SpectralFilmSelection
 import com.hinnka.mycamera.raw.SpectralFilmUiInfo
 import com.hinnka.mycamera.raw.SpectralFilmTuning
+import com.hinnka.mycamera.raw.fotufilm.FotufilmDocument
 import kotlin.math.roundToInt
 import com.hinnka.mycamera.ui.settings.DropdownSettingItem
 import com.hinnka.mycamera.ui.icons.AppIcons
@@ -140,6 +141,8 @@ fun RawEditPanel(
     onSpectralFilmPrintChange: (String?) -> Unit,
     onAdjustmentStart: () -> Unit,
     onAdjustmentEnd: () -> Unit,
+    fotufilmDocument: FotufilmDocument? = null,
+    onFotufilmDocumentChange: (FotufilmDocument) -> Unit = {},
     onRawExposureCompensationReset: ((Float) -> Unit)? = null,
     onOpenBaselineLutSheet: (() -> Unit)? = null,
     showAdaptiveExposureControl: Boolean = false,
@@ -195,6 +198,8 @@ fun RawEditPanel(
             onSelectEmbeddedDngProfile = onSelectEmbeddedDngProfile,
             onSpectralFilmSelectionChange = onSpectralFilmSelectionChange,
             onSpectralFilmPrintChange = onSpectralFilmPrintChange,
+            fotufilmDocument = fotufilmDocument,
+            onFotufilmDocumentChange = onFotufilmDocumentChange,
             hncsFilmCurveMode = hncsFilmCurveMode,
             onHncsFilmCurveModeChange = onHncsFilmCurveModeChange,
             onAdjustmentStart = onAdjustmentStart,
@@ -309,6 +314,8 @@ fun RawRenderingEngineSettingsPanel(
     onSelectEmbeddedDngProfile: ((RawEmbeddedDngProfileOption) -> Unit)? = null,
     onSpectralFilmSelectionChange: (SpectralFilmSelection?) -> Unit,
     onSpectralFilmPrintChange: (String?) -> Unit,
+    fotufilmDocument: FotufilmDocument? = null,
+    onFotufilmDocumentChange: (FotufilmDocument) -> Unit = {},
     hncsFilmCurveMode: HncsFilmCurveMode = HncsFilmCurveMode.Standard,
     onHncsFilmCurveModeChange: (HncsFilmCurveMode) -> Unit = {},
     onAdjustmentStart: () -> Unit = {},
@@ -481,6 +488,16 @@ fun RawRenderingEngineSettingsPanel(
                 )
                 Spacer(modifier = Modifier.height(16.dp))
             }
+        }
+
+        if (rawRenderingEngine.isFotufilm && fotufilmDocument != null) {
+            FotufilmControls(
+                document = fotufilmDocument,
+                onDocumentChange = onFotufilmDocumentChange,
+                onAdjustmentStart = onAdjustmentStart,
+                onAdjustmentEnd = onAdjustmentEnd,
+            )
+            Spacer(modifier = Modifier.height(16.dp))
         }
 
         if (showToneMappingControls) {
@@ -1377,6 +1394,7 @@ private fun rawRenderingEngineName(engine: RawRenderingEngine): String {
         RawRenderingEngine.Lumix -> stringResource(R.string.settings_raw_color_engine_lumix)
         RawRenderingEngine.Canon -> stringResource(R.string.settings_raw_color_engine_canon)
         RawRenderingEngine.Leica -> stringResource(R.string.settings_raw_color_engine_leica)
+        RawRenderingEngine.Fotufilm -> stringResource(R.string.settings_raw_color_engine_fotufilm)
     }
 }
 
@@ -1392,6 +1410,7 @@ private fun rawColorEngineDescription(engine: RawRenderingEngine): String {
         RawRenderingEngine.Lumix -> stringResource(R.string.settings_raw_color_engine_lumix_description)
         RawRenderingEngine.Canon -> stringResource(R.string.settings_raw_color_engine_canon_description)
         RawRenderingEngine.Leica -> stringResource(R.string.settings_raw_color_engine_leica_description)
+        RawRenderingEngine.Fotufilm -> stringResource(R.string.settings_raw_color_engine_fotufilm_description)
     }
 }
 

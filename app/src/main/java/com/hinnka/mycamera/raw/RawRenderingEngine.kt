@@ -53,6 +53,16 @@ enum class RawRenderingEngine(
         defaultExposureCompensationEv = RAW_RENDERING_ENGINE_DEFAULT_EXPOSURE_EV,
         exposureCompensationDomain = RawExposureCompensationDomain.Linear
     ),
+    /**
+     * Fotufilm physically based film simulation (docs/fotufilm-rendering-engine.md). Scene light
+     * enters as linear Rec.2020; the print leaves as linear Display P3.
+     */
+    Fotufilm(
+        shaderId = 11,
+        workingColorSpace = ColorSpace.BT2020,
+        defaultExposureCompensationEv = RAW_RENDERING_ENGINE_DEFAULT_EXPOSURE_EV,
+        exposureCompensationDomain = RawExposureCompensationDomain.Linear
+    ),
     Spektrafilm(
         shaderId = 2,
         workingColorSpace = ColorSpace.ProPhoto,
@@ -72,6 +82,9 @@ enum class RawRenderingEngine(
         exposureCompensationDomain = RawExposureCompensationDomain.Linear
     ),
     ;
+
+    val isFotufilm: Boolean
+        get() = this == Fotufilm
 
     val isHncs: Boolean
         get() = this == Hncs

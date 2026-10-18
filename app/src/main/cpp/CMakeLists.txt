@@ -459,7 +459,11 @@ target_link_libraries(
     Threads::Threads
     log
 )
+# Fotufilm engine core (C++ port of FotufilmCore); see docs/fotufilm-rendering-engine.md.
+file(GLOB FOTUFILM_CORE_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/fotufilm/core/*.cpp)
 add_library(my-native-lib SHARED 
+    ${FOTUFILM_CORE_SOURCES}
+    fotufilm/fotufilm_jni.cpp
     native_runtime.cpp
     native-lib.cpp
     spektrafilm/spectral_data.cpp
@@ -508,6 +512,13 @@ add_library(my-native-lib SHARED
     "${MGC_SPATIAL_RGB_ASM}"
     ${LIBRAW_SOURCES}
     ${ADOBE_DNG_SOURCES}
+)
+
+# Fotufilm mirrors Swift Float semantics: no fast-math reassociation and no FMA contraction.
+set_source_files_properties(
+    ${FOTUFILM_CORE_SOURCES}
+    fotufilm/fotufilm_jni.cpp
+    PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off"
 )
 
 # Spectral curves/CAM16 and model validation require IEEE NaN/Inf semantics.

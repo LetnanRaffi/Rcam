@@ -90,6 +90,13 @@ enum class ColorSpace(
         0.036598f, 0.000105f,
         0.345704f, 0.358540f
     ),
+    /** Display P3 (P3 primaries, D65 white): Fotufilm's print delivery basis. */
+    DisplayP3(
+        0.680f, 0.320f,
+        0.265f, 0.690f,
+        0.150f, 0.060f,
+        0.3127f, 0.3290f
+    ),
 ;
 
     val primaries: FloatArray

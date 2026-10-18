@@ -24,6 +24,7 @@ internal class RawEnginePreviewGl {
     private val quad = RawFullscreenQuad()
     private var engines = newEnginePass()
     private val inverseAcr = LogInputGl()
+    private val fotufilmBake = FotufilmPreviewBake(quad)
     private val programs = mutableMapOf<RawRenderingEngine, Int>()
     private var texture = 0
     private var framebuffer = 0
@@ -44,6 +45,8 @@ internal class RawEnginePreviewGl {
             quad.createProgram(shader(plan.engine), "previewEngineLut${plan.engine}")
         }
         if (program == 0 || !ensureTarget()) return false
+        val fotufilm = plan.resources.fotufilm
+        if (fotufilm != null && !fotufilmBake.ensureTargets(ATLAS_WIDTH, ATLAS_HEIGHT)) return false
         GLES30.glUseProgram(program)
         // Unit 4 is the RAW HDR reference curve's slot, unused by SDR engine resources.
         inverseAcr.bind(GLES30.glGetUniformLocation(program, "uInverseAcr3Texture"), 4)
@@ -61,7 +64,11 @@ internal class RawEnginePreviewGl {
             plan.cameraClip ?: WHITE, 0,
         )
         // Resource uploads may alter active bindings. Establish all draw inputs explicitly.
-        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, framebuffer)
+        // Fotufilm's input shader leaves scene light, which its own graph then develops.
+        GLES30.glBindFramebuffer(
+            GLES30.GL_FRAMEBUFFER,
+            if (fotufilm != null) fotufilmBake.sceneFramebuffer else framebuffer,
+        )
         GLES30.glViewport(0, 0, ATLAS_WIDTH, ATLAS_HEIGHT)
         GLES30.glDisable(GLES30.GL_BLEND)
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
@@ -71,6 +78,11 @@ internal class RawEnginePreviewGl {
         val error = GLES30.glGetError()
         if (error != GLES30.GL_NO_ERROR) {
             PLog.e(TAG, "LUT bake failed engine=${plan.engine} restore=${plan.restoration} error=$error")
+            lastPlan = null
+            return false
+        }
+        if (fotufilm != null && !fotufilmBake.bake(fotufilm, framebuffer, ATLAS_WIDTH, ATLAS_HEIGHT)) {
+            PLog.e(TAG, "Fotufilm LUT bake failed")
             lastPlan = null
             return false
         }
@@ -134,6 +146,7 @@ internal class RawEnginePreviewGl {
     }
 
     fun release() {
+        fotufilmBake.release()
         engines.release()
         inverseAcr.release()
         programs.values.forEach { if (it != 0) GLES30.glDeleteProgram(it) }
@@ -143,6 +156,7 @@ internal class RawEnginePreviewGl {
 
     /** Context loss invalidates every cached handle without deleting names in the new context. */
     fun reset() {
+        fotufilmBake.reset()
         engines = newEnginePass()
         inverseAcr.reset()
         programs.clear()

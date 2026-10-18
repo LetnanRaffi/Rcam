@@ -168,5 +168,6 @@ data class GalleryMediaEntity(
     val spectralFilmPrint: String?,
     val spectralFilmCDensityGain: Float,
     val spectralFilmMDensityGain: Float,
-    val spectralFilmYDensityGain: Float
+    val spectralFilmYDensityGain: Float,
+    val fotufilmDocument: String?
 )

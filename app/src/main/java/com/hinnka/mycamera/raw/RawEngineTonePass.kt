@@ -33,6 +33,7 @@ internal class RawEngineTonePass(
         val lumixRenderPlan: LumixRenderPlan? = null,
         val canonRenderPlan: CanonRenderPlan? = null,
         val leicaRenderPlan: LeicaRenderPlan? = null,
+        val fotufilm: FotufilmRenderRequest? = null,
         val bindProfileGainTable: (program: Int) -> Unit,
     ) {
         fun toColorResources() = RawEngineColorResources(
@@ -47,6 +48,7 @@ internal class RawEngineTonePass(
             lumixRenderPlan = lumixRenderPlan,
             canonRenderPlan = canonRenderPlan,
             leicaRenderPlan = leicaRenderPlan,
+            fotufilm = fotufilm,
         )
     }
 
@@ -68,19 +70,41 @@ internal class RawEngineTonePass(
     private val lumixAlgorithm = LumixToneAlgorithm(quad)
     private val canonAlgorithm = CanonToneAlgorithm(quad)
     private val leicaAlgorithm = LeicaToneAlgorithm(quad)
+    private val fotufilmStage = FotufilmToneStage(quad)
 
-    fun render(input: Input): Output? = algorithmFor(input.colorEngine).render(input)
+    fun render(input: Input): Output? = if (input.colorEngine.isFotufilm) {
+        fotufilmStage.render(input)
+    } else {
+        algorithmFor(input.colorEngine).render(input)
+    }
+
+    /** Whole-frame metering contribution of one full-resolution tile; see [FotufilmToneStage.meterTile]. */
+    internal fun meterFotufilmTile(
+        input: Input,
+        coreLeft: Int,
+        coreTop: Int,
+        coreWidth: Int,
+        coreHeight: Int,
+        cellSize: Int,
+    ): FotufilmMeterCells? = fotufilmStage.meterTile(input, coreLeft, coreTop, coreWidth, coreHeight, cellSize)
 
     internal fun bindColorResources(program: Int, resources: RawEngineColorResources) =
         algorithmFor(resources.colorEngine).bindColorResources(program, resources)
 
-    fun prewarm(colorEngine: RawRenderingEngine): Boolean = algorithmFor(colorEngine).prewarm()
+    fun prewarm(colorEngine: RawRenderingEngine): Boolean = if (colorEngine.isFotufilm) {
+        fotufilmStage.prewarm()
+    } else {
+        algorithmFor(colorEngine).prewarm()
+    }
 
     fun renderHdrReference(
         input: Input,
         sceneExposureGain: Float,
         coordinateInput: HdrCoordinateInput?,
-    ): Output? = algorithmFor(input.colorEngine).renderHdrReference(
+    ): Output? = if (input.colorEngine.isFotufilm) {
+        // Fotufilm delivers an SDR print (upstream: paper output is SDR); no HDR reference exists.
+        error("Fotufilm has no HDR reference rendering")
+    } else algorithmFor(input.colorEngine).renderHdrReference(
         input = input,
         sceneExposureGain = sceneExposureGain,
         coordinateInput = coordinateInput,
@@ -96,6 +120,7 @@ internal class RawEngineTonePass(
         lumixAlgorithm.release()
         canonAlgorithm.release()
         leicaAlgorithm.release()
+        fotufilmStage.release()
         dcpTextures.release()
         curveTextures.release()
     }
@@ -111,6 +136,7 @@ internal class RawEngineTonePass(
             RawRenderingEngine.Lumix -> lumixAlgorithm
             RawRenderingEngine.Canon -> canonAlgorithm
             RawRenderingEngine.Leica -> leicaAlgorithm
+            RawRenderingEngine.Fotufilm -> fotufilmStage.inputAlgorithm
         }
     }
 
@@ -336,6 +362,7 @@ internal class RawEngineTonePass(
                 RawRenderingEngine.Lumix -> LumixToneShader.DEFINITION
                 RawRenderingEngine.Canon -> CanonToneShader.DEFINITION
                 RawRenderingEngine.Leica -> LeicaToneShader.DEFINITION
+                RawRenderingEngine.Fotufilm -> FotufilmInputToneShader.DEFINITION
             }
         }
 

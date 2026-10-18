@@ -263,6 +263,7 @@ fun CameraScreen(
     val rawSpectralFilmStock by viewModel.rawSpectralFilmStock.collectAsState()
     val rawSpectralFilmSelection by viewModel.rawSpectralFilmSelection.collectAsState()
     val rawSpectralFilmPrint by viewModel.rawSpectralFilmPrint.collectAsState()
+    val rawFotufilmDocument by viewModel.rawFotufilmDocument.collectAsState()
     val multipleExposureState = viewModel.multipleExposureState
     val canStartShutterAnimation by viewModel.canStartShutterAnimation.collectAsState()
     val currentCaptureModeForEffects by rememberUpdatedState(state.captureMode)
@@ -1725,6 +1726,8 @@ fun CameraScreen(
             onRawToneMappingParametersChange = { viewModel.setRawToneMappingParameters(it) },
             onRawSpectralFilmSelectionChange = { viewModel.setRawSpectralFilmSelection(it) },
             onRawSpectralFilmPrintChange = { viewModel.setRawSpectralFilmPrint(it) },
+            rawFotufilmDocument = rawFotufilmDocument,
+            onRawFotufilmDocumentChange = { viewModel.setRawFotufilmDocument(it) },
             meteringMode = state.meteringMode,
             onMeteringModeChange = { viewModel.setMeteringMode(it) },
             onFilterManageClick = {

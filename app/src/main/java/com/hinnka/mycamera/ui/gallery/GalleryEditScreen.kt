@@ -285,6 +285,7 @@ fun GalleryEditScreen(
     val editRawToneMappingParameters by viewModel.editRawToneMappingParameters.collectAsState()
     val editRawSpectralFilmStock by viewModel.editRawSpectralFilmStock.collectAsState()
     val editRawSpectralFilmPrint by viewModel.editRawSpectralFilmPrint.collectAsState()
+    val editRawFotufilmDocument by viewModel.editRawFotufilmDocument.collectAsState()
     val editRawSpectralFilmCDensityGain by viewModel.editRawSpectralFilmCDensityGain.collectAsState()
     val editRawSpectralFilmMDensityGain by viewModel.editRawSpectralFilmMDensityGain.collectAsState()
     val editRawSpectralFilmYDensityGain by viewModel.editRawSpectralFilmYDensityGain.collectAsState()
@@ -1877,6 +1878,9 @@ fun GalleryEditScreen(
                                                 requestRawPreviewRefresh()
                                             }
                                         },
+                                        // The panel ends every Fotufilm change with onAdjustmentEnd, which persists it.
+                                        fotufilmDocument = editRawFotufilmDocument,
+                                        onFotufilmDocumentChange = { viewModel.editRawFotufilmDocument.value = it },
                                         onAdjustmentStart = { },
                                         onAdjustmentEnd = {
                                             viewModel.persistCurrentRawEditMetadata(currentEditSourcePhoto) {
