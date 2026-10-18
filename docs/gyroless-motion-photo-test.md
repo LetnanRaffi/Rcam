@@ -14,6 +14,28 @@ The existing gallery thumbnail processing overlay remains visible while the capt
 find app/build/outputs/apk -name '*.apk'
 ```
 
+On a machine with about 4 GiB RAM, pass these options to either Gradle command:
+
+```sh
+ANDROID_HOME=/path/to/Android/Sdk ./gradlew :app:assembleDefaultDebug \
+  -Dorg.gradle.jvmargs='-Xmx1280m -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8' \
+  -Pkotlin.daemon.jvmargs='-Xmx2048m -XX:MaxMetaspaceSize=512m' \
+  --max-workers=1
+```
+
+Validation on 2026-10-19: `assembleDefaultDebug` succeeded and produced
+`app/build/outputs/apk/default/debug/app-default-debug.apk`. Ten Motion Photo
+unit tests passed. The checkout's existing `BokehShadersTest.kt` does not
+compile because it calls three shader helpers absent from `Shaders.kt`; that
+file was temporarily removed from the unit-test source set for the focused
+run and restored afterward. The existing instrumented
+`OglBokehProcessorShaderTest.kt` similarly uses an obsolete Bokeh API; with
+that file temporarily excluded, `compileDefaultDebugAndroidTestKotlin`
+succeeded. No connected device was available, so instrumented tests and
+Xiaomi Gallery playback remain unverified. Android Lint was attempted but
+stopped during whole-project analysis after more than 15 minutes on this
+RAM-limited machine; there is no completed lint result.
+
 The debug build already has the `.debug` application ID suffix. Install only the debug APK you built; do not replace a production app. The instrumented fallback test requires a connected Android device or emulator:
 
 ```sh
