@@ -5146,6 +5146,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun setStabilizeMotionPhoto(enabled: Boolean) {
+        viewModelScope.launch { userPreferencesRepository.saveStabilizeMotionPhoto(enabled) }
+    }
+
     fun setEnableDevelopAnimation(enabled: Boolean) {
         viewModelScope.launch {
             userPreferencesRepository.saveEnableDevelopAnimation(enabled)
@@ -6131,7 +6135,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             withContext(Dispatchers.IO) {
-                GalleryManager.saveVideo(context, photoId, livePhotoVideoDeferred)
+                GalleryManager.saveVideo(context, photoId, livePhotoVideoDeferred, settings.preferences.stabilizeMotionPhoto)
 
                 GalleryManager.savePhoto(
                     context,
@@ -6565,7 +6569,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             withContext(Dispatchers.IO) {
-                GalleryManager.saveVideo(context, photoId, livePhotoVideoDeferred)
+                GalleryManager.saveVideo(context, photoId, livePhotoVideoDeferred, settings.preferences.stabilizeMotionPhoto)
 
                 GalleryManager.saveStackedPhoto(
                     context,

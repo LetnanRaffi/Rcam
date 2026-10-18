@@ -221,6 +221,7 @@ data class UserPreferences(
     val useHeicExport: Boolean = false, // 是否优先使用 HEIC 导出
     val useJpeg444Export: Boolean = false, // 是否使用 JPEG 4:4:4 色度采样导出
     val useLivePhoto: Boolean = false, // 是否启用 Live Photo (Motion Photo)
+    val stabilizeMotionPhoto: Boolean = false,
     val enableDevelopAnimation: Boolean = false, // 是否启用拍摄后的显影动画
     val colorPaletteEnabled: Boolean = false,
     val developAnimationStyle: DevelopAnimationStyle = DevelopAnimationStyle.FILM,
@@ -501,6 +502,7 @@ class UserPreferencesRepository(private val context: Context) {
         private val USE_HEIC_EXPORT = booleanPreferencesKey("use_heic_export")
         private val USE_JPEG_444_EXPORT = booleanPreferencesKey("use_jpeg_444_export")
         private val USE_LIVE_PHOTO = booleanPreferencesKey("use_live_photo")
+        private val STABILIZE_MOTION_PHOTO = booleanPreferencesKey("stabilize_motion_photo")
         private val ENABLE_DEVELOP_ANIMATION = booleanPreferencesKey("enable_develop_animation")
         private val COLOR_PALETTE_ENABLED = booleanPreferencesKey("color_palette_enabled")
         private val DEVELOP_ANIMATION_STYLE = stringPreferencesKey("develop_animation_style")
@@ -854,6 +856,7 @@ class UserPreferencesRepository(private val context: Context) {
                 useHeicExport = useHeicExport,
                 useJpeg444Export = useJpeg444Export,
                 useLivePhoto = preferences[USE_LIVE_PHOTO] ?: false,
+                stabilizeMotionPhoto = preferences[STABILIZE_MOTION_PHOTO] ?: false,
                 enableDevelopAnimation = preferences[ENABLE_DEVELOP_ANIMATION] ?: false,
                 colorPaletteEnabled = preferences[COLOR_PALETTE_ENABLED] ?: false,
                 developAnimationStyle = DevelopAnimationStyle.entries.firstOrNull {
@@ -2231,6 +2234,12 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun saveUseLivePhoto(enabled: Boolean) {
         context.dataStore.edit { preferences ->
             preferences[USE_LIVE_PHOTO] = enabled
+        }
+    }
+
+    suspend fun saveStabilizeMotionPhoto(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[STABILIZE_MOTION_PHOTO] = enabled
         }
     }
 

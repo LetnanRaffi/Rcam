@@ -1511,4 +1511,6 @@
     <string name="fotufilm_value_minutes">%1$s min</string>
     <string name="fotufilm_value_years">%1$s yr</string>
     <!-- /Fotufilm controls -->
+    <string name="settings_stabilize_motion_photo">Stabilize Motion Photo (experimental)</string>
+    <string name="settings_stabilize_motion_photo_description">Reduces handheld shake in the moving clip without a gyroscope. Saving may take longer.</string>
 </resources>

@@ -483,4 +483,6 @@
     <string name="fotufilm_value_minutes">%1$s mnt</string>
     <string name="fotufilm_value_years">%1$s thn</string>
     <!-- /Fotufilm controls -->
+    <string name="settings_stabilize_motion_photo">Stabilkan Motion Photo (eksperimental)</string>
+    <string name="settings_stabilize_motion_photo_description">Mengurangi guncangan tangan pada klip bergerak tanpa giroskop. Penyimpanan dapat memakan waktu lebih lama.</string>
 </resources>

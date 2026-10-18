@@ -1906,6 +1906,18 @@ fun SettingsScreen(
                         title = stringResource(R.string.settings_section_photo_mode),
                         showTitle = false
                     ) {
+                        SwitchSettingItem(
+                            title = stringResource(R.string.settings_stabilize_motion_photo),
+                            description = stringResource(R.string.settings_stabilize_motion_photo_description),
+                            checked = userPreferences.stabilizeMotionPhoto,
+                            onCheckedChange = viewModel::setStabilizeMotionPhoto,
+                            enabled = state.useLivePhoto,
+                        )
+                        HorizontalDivider(
+                            color = Color.White.copy(alpha = 0.1f),
+                            modifier = Modifier.padding(vertical = 12.dp)
+                        )
+
                         SliderSettingItem(
                             title = stringResource(R.string.settings_multi_frame_denoise_frame_count),
                             description = stringResource(

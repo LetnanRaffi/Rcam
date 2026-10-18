@@ -8,6 +8,8 @@ import android.graphics.*
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraMetadata
 import android.hardware.camera2.CaptureResult
+import android.media.MediaExtractor
+import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
@@ -29,6 +31,7 @@ import com.hinnka.mycamera.hdr.HdrGainmapStrength
 import com.hinnka.mycamera.hdr.SourceKind
 import com.hinnka.mycamera.hdr.UltraHdrWriter
 import com.hinnka.mycamera.hdr.UnifiedGainmapProducer
+import com.hinnka.mycamera.livephoto.MotionPhotoStabilizer
 import com.hinnka.mycamera.livephoto.MotionPhotoWriter
 import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
 import com.hinnka.mycamera.lut.ChromaDenoiseDefaults
@@ -1465,7 +1468,7 @@ object GalleryManager {
                 val outputGainmapResult = hdrOutput?.gainmapResult ?: gainmapResult
 
                 val videoFile = File(getPhotoDir(context, id), VIDEO_FILE)
-                val isLivePhoto = videoFile.exists()
+                val isLivePhoto = videoFile.isFile && videoFile.length() > 0L
 
                 // 保存到指定目录
                 val date = metadata.dateTaken ?: System.currentTimeMillis()
@@ -1563,7 +1566,11 @@ object GalleryManager {
                                 lutConfig = lutConfig,
                                 recipeParams = colorRecipeParams
                             )
-                            if (success && processedFile.exists() && processedFile.length() > 0) {
+                            if (success && processedFile.exists() && processedFile.length() > 0 &&
+                                isMotionVideoTimelineCompatible(
+                                    videoFile, processedFile,
+                                    latestMetadata.presentationTimestampUs ?: 0L
+                                )) {
                                 tempProcessedVideoFile = processedFile
                                 finalVideoPath = processedFile.absolutePath
                                 PLog.d(TAG, "exportPhoto: Successfully processed video effects. Size: ${processedFile.length()}")
@@ -1995,25 +2002,148 @@ object GalleryManager {
     suspend fun saveVideo(
         context: Context,
         photoId: String,
-        livePhotoVideoDeferred: Deferred<Pair<File, Long>?>? = null
+        livePhotoVideoDeferred: Deferred<Pair<File, Long>?>? = null,
+        stabilizeMotionPhoto: Boolean = false,
     ) {
         val photoDir = getPhotoDir(context, photoId, true)
         val videoFile = File(photoDir, VIDEO_FILE)
-        val livePhotoResult = livePhotoVideoDeferred?.await()
-        livePhotoResult?.first?.let { cacheVideoFile ->
-            if (cacheVideoFile.exists()) {
-                try {
-                    cacheVideoFile.copyTo(videoFile, overwrite = true)
-                    cacheVideoFile.delete()
+        val livePhotoResult = livePhotoVideoDeferred?.await() ?: return
+        val original = livePhotoResult.first
+        if (!original.isFile || original.length() == 0L) return
 
-                    // 更新元数据以包含时间戳
-                    val currentMeta = loadMetadata(context, photoId) ?: return
-                    saveMetadata(context, photoId, currentMeta.copy(presentationTimestampUs = livePhotoResult.second))
-                } catch (e: Exception) {
-                    PLog.e(TAG, "Failed to move video file", e)
-                }
-                PLog.d(TAG, "Motion Photo synthesized for $photoId with TS: ${livePhotoResult.second}")
+        var processedFile: File? = null
+        var published = false
+        try {
+            val metadata = loadMetadata(context, photoId)
+            if (metadata == null) {
+                publishMotionVideo(original, videoFile)
+                PLog.w(TAG, "Motion Photo metadata unavailable; saved original clip")
+                return
             }
+            val result = if (stabilizeMotionPhoto) {
+                try {
+                    MotionPhotoStabilizer.stabilize(original, livePhotoResult.second)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    PLog.w(TAG, "Motion Photo stabilization failed before output; using original clip")
+                    null
+                }
+            } else null
+            processedFile = result?.outputFile?.takeIf { it != original }
+            val selected = processedFile ?: original
+            val selectedTimestampUs = if (processedFile != null) result!!.primaryTimestampUs
+                else livePhotoResult.second
+
+            try {
+                publishMotionVideo(selected, videoFile)
+                check(saveMetadata(context, photoId,
+                    metadata.copy(presentationTimestampUs = selectedTimestampUs))) {
+                    "Motion Photo timestamp was not persisted"
+                }
+                published = true
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (selected == original) throw e
+                PLog.w(TAG, "Stabilized clip could not be published; restoring original clip")
+                publishMotionVideo(original, videoFile)
+                check(saveMetadata(context, photoId,
+                    metadata.copy(presentationTimestampUs = livePhotoResult.second))) {
+                    "Original Motion Photo timestamp was not persisted"
+                }
+                published = true
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Retain the original temporary MP4 until the capture owner finishes cleanup.
+            PLog.e(TAG, "Failed to save Motion Photo video", e)
+        } finally {
+            processedFile?.delete()
+            if (published) original.delete()
+        }
+    }
+
+    private data class MotionVideoTimeline(
+        val firstVideoUs: Long,
+        val lastVideoUs: Long,
+        val lastAudioUs: Long?,
+        val rotation: Int,
+    )
+
+    private fun motionVideoTimeline(file: File): MotionVideoTimeline {
+        val extractor = MediaExtractor()
+        try {
+            extractor.setDataSource(file.absolutePath)
+            var videoTrack = -1
+            var audioTrack = -1
+            for (i in 0 until extractor.trackCount) {
+                val mime = extractor.getTrackFormat(i).getString(MediaFormat.KEY_MIME).orEmpty()
+                if (mime.startsWith("video/")) videoTrack = i
+                if (mime.startsWith("audio/")) audioTrack = i
+            }
+            require(videoTrack >= 0)
+            fun bounds(track: Int): Pair<Long, Long> {
+                extractor.selectTrack(track)
+                extractor.seekTo(0L, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+                var first = -1L
+                var last = -1L
+                while (extractor.sampleTrackIndex >= 0) {
+                    if (extractor.sampleTrackIndex == track) {
+                        if (first < 0) first = extractor.sampleTime
+                        last = extractor.sampleTime
+                    }
+                    if (!extractor.advance()) break
+                }
+                extractor.unselectTrack(track)
+                require(first >= 0 && last >= first)
+                return first to last
+            }
+            val (first, last) = bounds(videoTrack)
+            val audioLast = if (audioTrack >= 0) bounds(audioTrack).second else null
+            val format = extractor.getTrackFormat(videoTrack)
+            val rotation = if (format.containsKey(MediaFormat.KEY_ROTATION))
+                format.getInteger(MediaFormat.KEY_ROTATION) else 0
+            return MotionVideoTimeline(first, last, audioLast, rotation)
+        } finally {
+            extractor.release()
+        }
+    }
+
+    private fun isMotionVideoTimelineCompatible(
+        original: File, candidate: File, primaryTimestampUs: Long,
+    ): Boolean = runCatching {
+        val before = motionVideoTimeline(original)
+        val after = motionVideoTimeline(candidate)
+        kotlin.math.abs(after.firstVideoUs - before.firstVideoUs) <= 50_000L &&
+            kotlin.math.abs(after.lastVideoUs - before.lastVideoUs) <= 100_000L &&
+            after.lastVideoUs >= primaryTimestampUs &&
+            before.rotation == after.rotation &&
+            (before.lastAudioUs == null && after.lastAudioUs == null ||
+                before.lastAudioUs != null && after.lastAudioUs != null &&
+                    kotlin.math.abs(before.lastAudioUs - after.lastAudioUs) <= 100_000L)
+    }.getOrDefault(false)
+
+    private fun publishMotionVideo(source: File, destination: File) {
+        val temporary = File.createTempFile("motion_publish_", ".mp4", destination.parentFile)
+        try {
+            source.copyTo(temporary, overwrite = true)
+            require(temporary.length() > 0L) { "empty Motion Photo video" }
+            try {
+                java.nio.file.Files.move(
+                    temporary.toPath(), destination.toPath(),
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                )
+            } catch (e: java.nio.file.AtomicMoveNotSupportedException) {
+                java.nio.file.Files.move(
+                    temporary.toPath(), destination.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                )
+            }
+        } finally {
+            temporary.delete()
         }
     }
 
