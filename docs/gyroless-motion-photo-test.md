@@ -1,10 +1,12 @@
 # Gyro-less Motion Photo stabilization
 
-The Photo mode setting **Stabilize Motion Photo (experimental)** is stored per app install and defaults to OFF. Enable Live Photo in the camera first. Ordinary video stabilization is separate.
+The Photo mode setting **Stabilize Motion Photo (experimental)** is stored per app install and defaults to ON for new installs. Existing saved ON/OFF choices are preserved. Enable Live Photo in the camera first. Ordinary video stabilization is separate.
 
-On capture, `LivePhotoRecorder.recordVideo` produces a short temporary MP4 and shutter-relative timestamp. `CameraViewModel` passes the capture's preference snapshot to `GalleryManager.saveVideo`. When enabled, `MotionPhotoStabilizer` decodes luma frames, tracks a grid of textured background patches with robust median outlier rejection, smooths a bounded translation trajectory, crops 10% on each edge and warps decoded frames into an H.264 encoder surface through GLES. It copies source audio samples into the new MP4 with their timestamps rebased to the first source video frame. The resulting MP4 is checked for video dimensions, rotation, duration and audio timeline before publication. `MotionPhotoWriter` and the still JPEG are unchanged.
+On capture, `LivePhotoRecorder.recordVideo` produces a short temporary MP4 and shutter-relative timestamp. `CameraViewModel` snapshots the preference at shutter time. The still photo is saved and made viewable before video completion. A bounded background job then waits for post-roll, processes the clip, publishes the final MP4 and only then auto-exports the Motion Photo. Manual export while the clip is processing is rejected. Internal playback waits for the final nonempty file and enters near the primary photo timestamp.
 
-The existing gallery thumbnail processing overlay remains visible while the capture queue saves the photo and video. The original MP4 remains available until a valid output and timestamp are saved. Low texture, excessive displacement, unsupported codec/resolution, timeout, codec errors and invalid output cause fallback to the original. The saved video's temporary copy is published within its directory before export. This pipeline uses no sensor motion or network service.
+When enabled, `MotionPhotoStabilizer` decodes luma frames and tracks spatially distributed corners. Deterministic two-point RANSAC estimates a dominant background similarity transform, selecting translation when rotation/scale do not improve fit. A bounded Huber acceleration optimizer smooths the complete path, preserves steady pans, splits at detected scene cuts and anchors the shutter frame. An isolated low-confidence pair keeps the path continuous. One fixed crop is checked against all warped corners. GLES applies translation, rotation and scale into an H.264 encoder surface using the decoded frame PTS; source audio is remuxed with the corresponding timestamp offset. The output MP4 is checked for video dimensions, rotation, duration and audio timeline before atomic publication. Original video remains available for fallback. `MotionPhotoWriter` and the still JPEG are unchanged.
+
+The processing state distinguishes global stabilization, a reduced model with unreliable frame pairs, already-stable input and original fallback in logs/status. Low texture, excessive displacement, unsupported codec/resolution, timeout, codec errors and invalid output can cause fallback to the original. Stabilization jobs run one at a time, with at most two queued; further captures retain their original clip. This pipeline uses no sensor motion or network service. No spatial mesh or rolling-shutter correction is implemented; the conservative global model avoids unsupported local deformation.
 
 ## Build and checks
 
@@ -36,6 +38,18 @@ Xiaomi Gallery playback remain unverified. Android Lint was attempted but
 stopped during whole-project analysis after more than 15 minutes on this
 RAM-limited machine; there is no completed lint result.
 
+PRD v3 validation on the same date: `compileDefaultDebugKotlin` passed after
+the global similarity/Huber path and nonblocking Motion Photo integration.
+Sixteen focused Live/Motion Photo JVM tests passed, including a ground-truth
+synthetic pan with alternating shake: mean absolute step residual decreased
+from 5.0 to 0.56557024 analysis pixels (88.7%). This tests motion math, not a
+decoded/encoded MP4. The unchanged `BokehShadersTest.kt` still fails to compile
+against three missing shader helpers, so it was temporarily excluded only
+during the focused run and restored afterward. No connected Android device
+or matching arm64 emulator is available for the MediaCodec/GLES instrumented
+test. Codec output, Xiaomi Gallery playback, and Redmi 13C visual quality are
+not yet validated on a device.
+
 The debug build already has the `.debug` application ID suffix. Install only the debug APK you built; do not replace a production app. The instrumented fallback test requires a connected Android device or emulator:
 
 ```sh
@@ -50,4 +64,4 @@ The debug build already has the `.debug` application ID suffix. Install only the
 4. Capture a scene with low texture or rapid shake to exercise fallback. Confirm a Motion Photo is still saved.
 5. Record processing time, memory/thermal behavior and any codec or gallery errors from device logs. A source build or emulator test does not establish Xiaomi Gallery compatibility.
 
-The crop cannot recover blur already present within a frame. Translation estimation cannot correct rotation or rolling shutter, and low light or a dominant moving subject may trigger fallback. Captures over 180 frames, above 1920x1080 pixel count, or over 30 seconds of processing fall back. Device tuning is pending.
+The crop cannot recover blur already present within a frame. The global similarity model corrects translation and rotation but not parallax or rolling shutter; low light or a dominant moving subject may trigger fallback. Captures over 180 frames, above 1920x1080 pixel count, or over 60 seconds of processing fall back. Device tuning is pending.

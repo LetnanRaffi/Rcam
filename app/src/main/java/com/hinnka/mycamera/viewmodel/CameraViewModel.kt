@@ -156,6 +156,7 @@ private data class CaptureSettingsSnapshot(
     @Volatile var originalThumbnail: Bitmap? = null,
     @Volatile var displayThumbnail: Bitmap? = null,
     var livePhotoVideo: CompletableDeferred<Pair<File, Long>?>? = null,
+    @Volatile var motionVideoOwnedByGallery: Boolean = false,
     var captureId: Long = 0L,
     @Volatile var captureCompleted: Boolean = false,
     @Volatile var processingFinished: Boolean = false,
@@ -2148,12 +2149,14 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                         shotSettings.galleryRegistration.await()
                         processCapturedPhoto(photo, shotSettings)
                     } finally {
-                        GalleryManager.finishProcessingPhoto(
-                            getApplication(), shotSettings.photoId, shotSettings.savedPhotoId != null
-                        )
-                        // A failed photo preparation must not orphan its already-recorded video.
-                        withContext(Dispatchers.IO) {
-                            shotSettings.livePhotoVideo?.await()?.first?.delete()
+                        if (!shotSettings.motionVideoOwnedByGallery) {
+                            GalleryManager.finishProcessingPhoto(
+                                getApplication(), shotSettings.photoId, shotSettings.savedPhotoId != null
+                            )
+                            // Only the capture queue owns the MP4 when no completion job was started.
+                            withContext(Dispatchers.IO) {
+                                shotSettings.livePhotoVideo?.await()?.first?.delete()
+                            }
                         }
                         shotSettings.processingFinished = true
                         publishCapturedThumbnail(shotSettings)
@@ -6135,8 +6138,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             withContext(Dispatchers.IO) {
-                GalleryManager.saveVideo(context, photoId, livePhotoVideoDeferred, settings.preferences.stabilizeMotionPhoto)
-
                 GalleryManager.savePhoto(
                     context,
                     photoId,
@@ -6146,7 +6147,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     aspectRatio,
                     resolvedCharacteristics,
                     captureResult,
-                    shouldAutoSave,
+                    shouldAutoSave && livePhotoVideoDeferred == null,
                     contentRepository.photoProcessor,
                     sharpeningValue,
                     noiseReductionValue,
@@ -6157,6 +6158,21 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     exportDngWithRawExport = settings.preferences.exportDngWithRawExport,
                     capturePortraitMask = capturePortraitMask,
                 )
+                if (livePhotoVideoDeferred != null && GalleryManager.getOriginalImageFile(context, photoId) != null) {
+                    GalleryManager.completeMotionPhotoInBackground(
+                        context, photoId, livePhotoVideoDeferred,
+                        settings.preferences.stabilizeMotionPhoto, shouldAutoSave,
+                    ) { finalMetadata ->
+                        GalleryManager.exportPhoto(
+                            context, photoId, photoProcessor = contentRepository.photoProcessor,
+                            metadata = finalMetadata, sharpeningValue = sharpeningValue,
+                            noiseReductionValue = noiseReductionValue,
+                            chromaNoiseReductionValue = chromaNoiseReductionValue,
+                            photoQuality = photoQualityValue,
+                        )
+                    }
+                    settings.motionVideoOwnedByGallery = true
+                }
             }
             PLog.d(TAG, "Image saved: $photoId, LUT: $lutIdToSave, Frame: $frameIdToSave")
             markCapturedThumbnailSaved(settings, photoId)
@@ -6569,8 +6585,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             withContext(Dispatchers.IO) {
-                GalleryManager.saveVideo(context, photoId, livePhotoVideoDeferred, settings.preferences.stabilizeMotionPhoto)
-
                 GalleryManager.saveStackedPhoto(
                     context,
                     photoId,
@@ -6579,7 +6593,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     aspectRatio,
                     characteristics,
                     captureResult,
-                    shouldAutoSave,
+                    shouldAutoSave && livePhotoVideoDeferred == null,
                     contentRepository.photoProcessor,
                     sharpeningValue,
                     noiseReductionValue,
@@ -6597,6 +6611,21 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     rawMaxSpatialOutputMode = rawSpatialOutputMode,
                     rawMaxMergeMethod = rawMaxMergeMethod,
                 )
+                if (livePhotoVideoDeferred != null && GalleryManager.getOriginalImageFile(context, photoId) != null) {
+                    GalleryManager.completeMotionPhotoInBackground(
+                        context, photoId, livePhotoVideoDeferred,
+                        settings.preferences.stabilizeMotionPhoto, shouldAutoSave,
+                    ) { finalMetadata ->
+                        GalleryManager.exportPhoto(
+                            context, photoId, photoProcessor = contentRepository.photoProcessor,
+                            metadata = finalMetadata, sharpeningValue = sharpeningValue,
+                            noiseReductionValue = noiseReductionValue,
+                            chromaNoiseReductionValue = chromaNoiseReductionValue,
+                            photoQuality = photoQualityValue,
+                        )
+                    }
+                    settings.motionVideoOwnedByGallery = true
+                }
             }
             PLog.d(TAG, "Image saved: $photoId, LUT: $lutIdToSave, Frame: $frameIdToSave")
             markCapturedThumbnailSaved(settings, photoId)

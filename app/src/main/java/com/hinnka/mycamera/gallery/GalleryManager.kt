@@ -109,6 +109,7 @@ import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
 import kotlin.io.copyTo
 import kotlin.io.deleteRecursively
@@ -187,6 +188,19 @@ object GalleryManager {
     )
 
     val processingScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    enum class MotionClipStatus { PROCESSING, READY_STABILIZED, READY_STABLE, FALLBACK_ORIGINAL, VIDEO_UNAVAILABLE }
+    private val _motionClipStatuses = MutableStateFlow<Map<String, MotionClipStatus>>(emptyMap())
+    val motionClipStatuses = _motionClipStatuses.asStateFlow()
+    private val motionStabilizationLock = Mutex()
+    private val queuedMotionStabilizations = AtomicInteger()
+    private fun setMotionClipStatus(photoId: String, status: MotionClipStatus) {
+        _motionClipStatuses.update { current ->
+            // A process-local diagnostic only; finalized older clips remain discoverable on disk.
+            (current + (photoId to status)).let { updated ->
+                if (updated.size <= 64) updated else updated - updated.keys.first()
+            }
+        }
+    }
     private val gainmapProducer = UnifiedGainmapProducer()
 
     @Volatile
@@ -1340,6 +1354,10 @@ object GalleryManager {
         bitmapComputationalBokehApplied: Boolean = false,
     ): Boolean {
         return withContext(Dispatchers.IO) {
+            if (_motionClipStatuses.value[id] == MotionClipStatus.PROCESSING) {
+                PLog.w(TAG, "Motion Photo export deferred until final clip is ready")
+                return@withContext false
+            }
             val tempExportFile = File(context.cacheDir, "temp_export_${System.nanoTime()}.jpg")
             try {
                 val hasEncodingOverride =
@@ -1999,26 +2017,88 @@ object GalleryManager {
         return left == other.left && top == other.top && right == other.right && bottom == other.bottom
     }
 
+    /** The photo processing queue hands off only the small MP4, never a captured Image. */
+    fun completeMotionPhotoInBackground(
+        context: Context,
+        photoId: String,
+        livePhotoVideoDeferred: Deferred<Pair<File, Long>?>,
+        stabilizeMotionPhoto: Boolean,
+        shouldAutoSave: Boolean,
+        exportFinalPhoto: suspend (MediaMetadata) -> Unit,
+    ) {
+        setMotionClipStatus(photoId, MotionClipStatus.PROCESSING)
+        val useStabilizer = stabilizeMotionPhoto && queuedMotionStabilizations.incrementAndGet() <= 2
+        if (!useStabilizer && stabilizeMotionPhoto) {
+            PLog.w(TAG, "Motion Photo stabilization queue full; saving original clip")
+        }
+        processingScope.launch(Dispatchers.IO) {
+            try {
+                val status = if (useStabilizer) {
+                    motionStabilizationLock.withLock {
+                        saveVideo(context, photoId, livePhotoVideoDeferred, true)
+                    }
+                } else {
+                    saveVideo(context, photoId, livePhotoVideoDeferred, false)
+                }
+                setMotionClipStatus(photoId, status)
+                if (status == MotionClipStatus.VIDEO_UNAVAILABLE) {
+                    PLog.w(TAG, "Motion Photo video unavailable; exporting still photo only")
+                }
+                if (shouldAutoSave && getOriginalImageFile(context, photoId) != null) {
+                    try {
+                        loadMetadata(context, photoId)?.let { exportFinalPhoto(it) }
+                    } catch (e: Exception) {
+                        PLog.e(TAG, "Motion Photo auto-export failed; private clip remains available", e)
+                    }
+                }
+            } catch (e: Exception) {
+                PLog.e(TAG, "Failed to complete Motion Photo", e)
+                val videoFile = File(getPhotoDir(context, photoId), VIDEO_FILE)
+                setMotionClipStatus(photoId, if (videoFile.isFile && videoFile.length() > 0L)
+                    MotionClipStatus.FALLBACK_ORIGINAL else MotionClipStatus.VIDEO_UNAVAILABLE)
+            } finally {
+                if (stabilizeMotionPhoto) queuedMotionStabilizations.decrementAndGet()
+                // The recorder can finish after our timeout. Reclaim its temporary MP4 then.
+                livePhotoVideoDeferred.invokeOnCompletion {
+                    processingScope.launch(Dispatchers.IO) {
+                        runCatching { livePhotoVideoDeferred.await()?.first?.delete() }
+                    }
+                }
+                finishProcessingPhoto(context, photoId, getOriginalImageFile(context, photoId) != null)
+            }
+        }
+    }
+
     suspend fun saveVideo(
         context: Context,
         photoId: String,
         livePhotoVideoDeferred: Deferred<Pair<File, Long>?>? = null,
         stabilizeMotionPhoto: Boolean = false,
-    ) {
+    ): MotionClipStatus {
         val photoDir = getPhotoDir(context, photoId, true)
         val videoFile = File(photoDir, VIDEO_FILE)
-        val livePhotoResult = livePhotoVideoDeferred?.await() ?: return
+        val livePhotoResult = livePhotoVideoDeferred?.let { deferred ->
+            withTimeoutOrNull(45_000L) { deferred.await() }
+        } ?: run {
+            PLog.w(TAG, "Motion Photo recorder did not provide a clip within 45 seconds")
+            return MotionClipStatus.VIDEO_UNAVAILABLE
+        }
         val original = livePhotoResult.first
-        if (!original.isFile || original.length() == 0L) return
+        if (!original.isFile || original.length() == 0L) {
+            PLog.w(TAG, "Motion Photo recorder produced an empty clip")
+            return MotionClipStatus.VIDEO_UNAVAILABLE
+        }
 
         var processedFile: File? = null
         var published = false
+        var processedStatus: MotionClipStatus? = null
         try {
             val metadata = loadMetadata(context, photoId)
             if (metadata == null) {
                 publishMotionVideo(original, videoFile)
                 PLog.w(TAG, "Motion Photo metadata unavailable; saved original clip")
-                return
+                published = true
+                return MotionClipStatus.FALLBACK_ORIGINAL
             }
             val result = if (stabilizeMotionPhoto) {
                 try {
@@ -2030,6 +2110,10 @@ object GalleryManager {
                     null
                 }
             } else null
+            if (stabilizeMotionPhoto) {
+                PLog.i(TAG, "Motion Photo stabilization status=${result?.status ?: MotionPhotoStabilizer.Status.ORIGINAL_FALLBACK} " +
+                    "reason=${result?.reason ?: "none"}")
+            }
             processedFile = result?.outputFile?.takeIf { it != original }
             val selected = processedFile ?: original
             val selectedTimestampUs = if (processedFile != null) result!!.primaryTimestampUs
@@ -2042,6 +2126,12 @@ object GalleryManager {
                     "Motion Photo timestamp was not persisted"
                 }
                 published = true
+                processedStatus = if (processedFile == null) null else when (result?.status) {
+                    MotionPhotoStabilizer.Status.STABILIZED_GLOBAL,
+                    MotionPhotoStabilizer.Status.REDUCED_MODEL -> MotionClipStatus.READY_STABILIZED
+                    MotionPhotoStabilizer.Status.ALREADY_STABLE -> MotionClipStatus.READY_STABLE
+                    else -> null
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -2054,11 +2144,16 @@ object GalleryManager {
                 }
                 published = true
             }
+            return processedStatus ?: MotionClipStatus.FALLBACK_ORIGINAL
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             // Retain the original temporary MP4 until the capture owner finishes cleanup.
             PLog.e(TAG, "Failed to save Motion Photo video", e)
+            // A video copied before metadata failed must not be exposed with stale timing.
+            if (!published) videoFile.delete()
+            return if (published) MotionClipStatus.FALLBACK_ORIGINAL
+                else MotionClipStatus.VIDEO_UNAVAILABLE
         } finally {
             processedFile?.delete()
             if (published) original.delete()

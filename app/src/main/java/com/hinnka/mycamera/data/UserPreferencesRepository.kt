@@ -221,7 +221,7 @@ data class UserPreferences(
     val useHeicExport: Boolean = false, // 是否优先使用 HEIC 导出
     val useJpeg444Export: Boolean = false, // 是否使用 JPEG 4:4:4 色度采样导出
     val useLivePhoto: Boolean = false, // 是否启用 Live Photo (Motion Photo)
-    val stabilizeMotionPhoto: Boolean = false,
+    val stabilizeMotionPhoto: Boolean = true,
     val enableDevelopAnimation: Boolean = false, // 是否启用拍摄后的显影动画
     val colorPaletteEnabled: Boolean = false,
     val developAnimationStyle: DevelopAnimationStyle = DevelopAnimationStyle.FILM,
@@ -856,7 +856,7 @@ class UserPreferencesRepository(private val context: Context) {
                 useHeicExport = useHeicExport,
                 useJpeg444Export = useJpeg444Export,
                 useLivePhoto = preferences[USE_LIVE_PHOTO] ?: false,
-                stabilizeMotionPhoto = preferences[STABILIZE_MOTION_PHOTO] ?: false,
+                stabilizeMotionPhoto = preferences[STABILIZE_MOTION_PHOTO] ?: true,
                 enableDevelopAnimation = preferences[ENABLE_DEVELOP_ANIMATION] ?: false,
                 colorPaletteEnabled = preferences[COLOR_PALETTE_ENABLED] ?: false,
                 developAnimationStyle = DevelopAnimationStyle.entries.firstOrNull {

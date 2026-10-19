@@ -16,6 +16,7 @@ internal class MotionPhotoWarpRenderer(
     private val width: Int,
     private val height: Int,
     private val analysisHeight: Int,
+    private val cropScale: Float,
 ) : AutoCloseable {
     private val display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
     private var context = EGL14.EGL_NO_CONTEXT
@@ -74,10 +75,20 @@ internal class MotionPhotoWarpRenderer(
                 uniform samplerExternalOES uTexture;
                 uniform mat4 uTextureMatrix;
                 uniform vec2 uOffset;
+                uniform vec2 uFrameSize;
+                uniform float uAngle;
+                uniform float uScale;
+                uniform float uCrop;
                 varying vec2 vUv;
                 void main() {
-                    vec2 sourceUv = clamp(vec2(0.5) + (vUv - vec2(0.5)) * 0.8 - uOffset,
-                        vec2(0.001), vec2(0.999));
+                    vec2 outputPx = vec2((vUv.x - 0.5) * uFrameSize.x,
+                        (0.5 - vUv.y) * uFrameSize.y) * uCrop - uOffset;
+                    float c = cos(uAngle);
+                    float s = sin(uAngle);
+                    vec2 sourcePx = vec2(c * outputPx.x + s * outputPx.y,
+                        -s * outputPx.x + c * outputPx.y) / uScale;
+                    vec2 sourceUv = clamp(vec2(0.5 + sourcePx.x / uFrameSize.x,
+                        0.5 - sourcePx.y / uFrameSize.y), vec2(0.001), vec2(0.999));
                     gl_FragColor = texture2D(uTexture, (uTextureMatrix * vec4(sourceUv, 0.0, 1.0)).xy);
                 }
             """.trimIndent())
@@ -116,7 +127,11 @@ internal class MotionPhotoWarpRenderer(
         GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uTexture"), 0)
         GLES20.glUniformMatrix4fv(GLES20.glGetUniformLocation(program, "uTextureMatrix"), 1, false, matrix, 0)
         GLES20.glUniform2f(GLES20.glGetUniformLocation(program, "uOffset"),
-            shift.x / 256f, -shift.y / analysisHeight)
+            shift.x * width / 256f, shift.y * height / analysisHeight)
+        GLES20.glUniform2f(GLES20.glGetUniformLocation(program, "uFrameSize"), width.toFloat(), height.toFloat())
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uAngle"), shift.rotationRadians)
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uScale"), shift.scale)
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uCrop"), cropScale)
         vertices.position(0)
         val location = GLES20.glGetAttribLocation(program, "aPosition")
         GLES20.glEnableVertexAttribArray(location)

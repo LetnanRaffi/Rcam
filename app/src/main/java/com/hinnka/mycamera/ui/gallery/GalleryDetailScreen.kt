@@ -2487,11 +2487,13 @@ fun MotionPhotoPlayer(
 ) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    val videoFile = remember(photo.id) {
+    val motionStatus = GalleryManager.motionClipStatuses.collectAsState().value[photo.id]
+    val videoFile = remember(photo.id, motionStatus) {
         viewModel.getMotionPhotoVideo(photo)
     }
 
-    if (!photo.isMotionPhoto || videoFile == null || !videoFile.exists()) {
+    if (!photo.isMotionPhoto || motionStatus == GalleryManager.MotionClipStatus.PROCESSING ||
+        videoFile == null || !videoFile.isFile || videoFile.length() == 0L) {
         if (photo.isMotionPhoto) {
             PLog.w("MotionPhotoPlayer", "Motion Photo video file missing: ${photo.id}")
         }
@@ -2505,6 +2507,9 @@ fun MotionPhotoPlayer(
     var lutConfig by remember { mutableStateOf<com.hinnka.mycamera.lut.LutConfig?>(null) }
     var recipeParams by remember { mutableStateOf<com.hinnka.mycamera.model.ColorRecipeParams?>(null) }
     var effectMetadataLoaded by remember(photo.id) { mutableStateOf(false) }
+    var primaryTimestampUs by remember(photo.id) {
+        mutableLongStateOf(photo.metadata?.presentationTimestampUs ?: 0L)
+    }
     val refreshKey = viewModel.photoRefreshKeys[photo.id] ?: 0L
 
     LaunchedEffect(photo.id, refreshKey) {
@@ -2526,6 +2531,7 @@ fun MotionPhotoPlayer(
             withContext(Dispatchers.Main) {
                 lutConfig = config
                 recipeParams = params
+                primaryTimestampUs = metadata?.presentationTimestampUs ?: 0L
                 effectMetadataLoaded = true
             }
         }
@@ -2590,7 +2596,9 @@ fun MotionPhotoPlayer(
                 exoPlayer.setMediaItem(MediaItem.fromUri(Uri.fromFile(videoFile)))
                 exoPlayer.prepare()
             }
-            exoPlayer.seekTo(0)
+            // Enter at the shutter frame so the still-to-motion transition does not jump
+            // back into the pre-roll. ExoPlayer's full-clip loop keeps pre-roll accessible.
+            exoPlayer.seekTo((primaryTimestampUs / 1000L).coerceAtLeast(0L))
             exoPlayer.playWhenReady = true
             exoPlayer.play()
         } else {

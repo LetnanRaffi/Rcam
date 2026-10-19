@@ -10,6 +10,8 @@ import android.view.Surface
 import com.hinnka.mycamera.utils.PLog
 import java.io.File
 import java.nio.ByteBuffer
+import kotlin.math.abs
+import kotlin.math.max
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -19,15 +21,18 @@ import kotlinx.coroutines.withContext
 /** Processes only the temporary MP4; the caller owns both input and any successful output. */
 internal object MotionPhotoStabilizer {
     private const val TAG = "MotionPhotoStabilizer"
-    private const val TIME_LIMIT_MS = 30_000L
+    private const val TIME_LIMIT_MS = 60_000L
     private const val MAX_FRAMES = 180
     private const val ANALYSIS_WIDTH = 256
+
+    enum class Status { STABILIZED_GLOBAL, REDUCED_MODEL, ALREADY_STABLE, ORIGINAL_FALLBACK }
 
     data class Result(
         val outputFile: File,
         val primaryTimestampUs: Long,
         val wasStabilized: Boolean,
         val reason: String? = null,
+        val status: Status = if (wasStabilized) Status.STABILIZED_GLOBAL else Status.ORIGINAL_FALLBACK,
     )
 
     private data class Analysis(
@@ -39,6 +44,9 @@ internal object MotionPhotoStabilizer {
         val analysisHeight: Int,
         val rotation: Int,
         val hadAudio: Boolean,
+        val framePtsUs: List<Long>,
+        val cropScale: Float,
+        val unreliablePairs: Int,
     )
 
     suspend fun stabilize(input: File, primaryTimestampUs: Long): Result = withContext(Dispatchers.IO) {
@@ -51,7 +59,7 @@ internal object MotionPhotoStabilizer {
             output = outputFile
             val videoOnlyFile = File.createTempFile("motion_video_", ".mp4", input.parentFile)
             videoOnly = videoOnlyFile
-            val analysis = analyze(input, start)
+            val analysis = analyze(input, primaryTimestampUs, start)
             encode(input, videoOnlyFile, analysis, start)
             remux(input, videoOnlyFile, outputFile, analysis, start)
             validate(input, outputFile, analysis, start)
@@ -59,8 +67,19 @@ internal object MotionPhotoStabilizer {
             require(mappedTimestamp <= analysis.lastPtsUs - analysis.firstPtsUs + 100_000) {
                 "primary timestamp outside output"
             }
-            PLog.i(TAG, "Processed ${analysis.width}x${analysis.height}, frames=${analysis.corrections.size}, elapsed=${SystemClock.elapsedRealtime() - start}ms")
-            Result(outputFile, mappedTimestamp, true)
+            val maxTranslation = analysis.corrections.maxOf { max(abs(it.x), abs(it.y)) }
+            val maxRotation = analysis.corrections.maxOf { abs(it.rotationRadians) }
+            val maxScaleChange = analysis.corrections.maxOf { abs(it.scale - 1f) }
+            val status = when {
+                maxTranslation < 0.25f && maxRotation < 0.002f && maxScaleChange < 0.002f -> Status.ALREADY_STABLE
+                analysis.unreliablePairs > 0 -> Status.REDUCED_MODEL
+                else -> Status.STABILIZED_GLOBAL
+            }
+            PLog.i(TAG, "status=$status frames=${analysis.corrections.size} crop=${analysis.cropScale} " +
+                "maxShiftAnalysisPx=$maxTranslation maxRotationRad=$maxRotation " +
+                "unreliablePairs=${analysis.unreliablePairs} elapsedMs=${SystemClock.elapsedRealtime() - start}")
+            Result(outputFile, mappedTimestamp, status != Status.ALREADY_STABLE,
+                if (status == Status.REDUCED_MODEL) "unreliable frame pairs" else null, status)
         } catch (e: CancellationException) {
             output?.delete()
             throw e
@@ -82,7 +101,7 @@ internal object MotionPhotoStabilizer {
         check(SystemClock.elapsedRealtime() - start < TIME_LIMIT_MS) { "stabilization timeout" }
     }
 
-    private suspend fun analyze(input: File, start: Long): Analysis {
+    private suspend fun analyze(input: File, primaryTimestampUs: Long, start: Long): Analysis {
         val extractor = MediaExtractor()
         var decoder: MediaCodec? = null
         try {
@@ -108,6 +127,9 @@ internal object MotionPhotoStabilizer {
             var receivedEos = false
             var previous: ByteArray? = null
             val motions = ArrayList<MotionPhotoMotion.Shift>()
+            val framePts = ArrayList<Long>()
+            val cuts = HashSet<Int>()
+            var unreliablePairs = 0
             var firstPts = -1L
             var lastPts = -1L
             var count = 0
@@ -135,10 +157,22 @@ internal object MotionPhotoStabilizer {
                         if (firstPts < 0) firstPts = info.presentationTimeUs
                         lastPts = info.presentationTimeUs
                         previous?.let { old ->
-                            motions.add(MotionPhotoMotion.estimate(old, gray, ANALYSIS_WIDTH, analysisHeight)
-                                ?: error("insufficient background features"))
+                            val motion = MotionPhotoMotion.estimate(old, gray, ANALYSIS_WIDTH, analysisHeight)
+                            if (motion == null) {
+                                unreliablePairs++
+                                // A blurred or dark frame is not necessarily a scene cut. Keep
+                                // the path continuous unless the whole image changed abruptly.
+                                var difference = 0L
+                                for (pixel in gray.indices step 4) {
+                                    difference += abs((gray[pixel].toInt() and 0xff) -
+                                        (old[pixel].toInt() and 0xff))
+                                }
+                                if (difference * 4 / gray.size > 55) cuts.add(count)
+                            }
+                            motions.add(motion ?: MotionPhotoMotion.Shift(0f, 0f))
                         }
                         previous = gray
+                        framePts.add(info.presentationTimeUs)
                         count++
                         check(count <= MAX_FRAMES) { "clip too long" }
                     }
@@ -146,10 +180,19 @@ internal object MotionPhotoStabilizer {
                     decoder.releaseOutputBuffer(index, false)
                 }
             }
-            val corrections = MotionPhotoMotion.corrections(motions, ANALYSIS_WIDTH, analysisHeight)
+            require(motions.size - unreliablePairs >= max(3, motions.size / 2)) {
+                "insufficient background features"
+            }
+            require(framePts.zipWithNext().all { (a, b) -> b > a }) { "non-monotonic source PTS" }
+            val primaryFrame = framePts.indices.minBy { abs(framePts[it] - primaryTimestampUs) }
+            val corrections = MotionPhotoMotion.corrections(
+                motions, ANALYSIS_WIDTH, analysisHeight, primaryFrame, cuts)
                 ?: error("motion exceeds crop or clip too short")
             require(firstPts >= 0 && lastPts > firstPts && corrections.size == count)
-            return Analysis(corrections, firstPts, lastPts, width, height, analysisHeight, rotation, audio)
+            val cropScale = MotionPhotoWarpGeometry.cropScale(corrections, width, height, analysisHeight)
+            require(cropScale >= 0.72f) { "correction exceeds crop budget" }
+            return Analysis(corrections, firstPts, lastPts, width, height, analysisHeight, rotation,
+                audio, framePts, cropScale, unreliablePairs)
         } finally {
             runCatching { decoder?.stop() }
             decoder?.release()
@@ -194,7 +237,8 @@ internal object MotionPhotoStabilizer {
             encoder.configure(target, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             inputSurface = encoder.createInputSurface()
             encoder.start()
-            renderer = MotionPhotoWarpRenderer(requireNotNull(inputSurface), analysis.width, analysis.height, analysis.analysisHeight)
+            renderer = MotionPhotoWarpRenderer(requireNotNull(inputSurface), analysis.width,
+                analysis.height, analysis.analysisHeight, analysis.cropScale)
             decoder = MediaCodec.createDecoderByType(sourceFormat.getString(MediaFormat.KEY_MIME)!!)
             decoder.configure(sourceFormat, renderer.decoderSurface, null, 0)
             decoder.start()
@@ -253,6 +297,9 @@ internal object MotionPhotoStabilizer {
                     if (decodeInfo.size > 0) {
                         drain(false)
                         check(frame < analysis.corrections.size) { "frame count changed between passes" }
+                        check(decodeInfo.presentationTimeUs == analysis.framePtsUs[frame]) {
+                            "frame PTS changed between passes"
+                        }
                         activeDecoder.releaseOutputBuffer(index, true)
                         activeRenderer.draw(analysis.corrections[frame], decodeInfo.presentationTimeUs - analysis.firstPtsUs)
                         frame++
