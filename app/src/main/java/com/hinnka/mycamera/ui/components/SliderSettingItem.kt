@@ -54,6 +54,7 @@ fun SliderSettingItem(
         ) {
             Text(
                 text = title,
+                modifier = Modifier.weight(1f),
                 color = if (enabled) Color.White else Color.White.copy(alpha = 0.45f),
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Normal
@@ -75,14 +76,15 @@ fun SliderSettingItem(
                 )
             }
 
-            Spacer(modifier = Modifier.weight(1f))
-            
             if (shouldShowSlider) {
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = valueTextFormatter(value),
                     color = Color.White.copy(alpha = if (enabled) 0.8f else 0.35f),
                     fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    softWrap = false,
                 )
             }
         }

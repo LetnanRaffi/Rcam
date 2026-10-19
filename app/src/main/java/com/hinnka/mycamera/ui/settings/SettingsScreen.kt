@@ -1911,7 +1911,6 @@ fun SettingsScreen(
                             description = stringResource(R.string.settings_stabilize_motion_photo_description),
                             checked = userPreferences.stabilizeMotionPhoto,
                             onCheckedChange = viewModel::setStabilizeMotionPhoto,
-                            enabled = state.useLivePhoto,
                         )
                         HorizontalDivider(
                             color = Color.White.copy(alpha = 0.1f),
