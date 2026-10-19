@@ -1866,7 +1866,22 @@ class Camera2Controller(private val context: Context) {
             null
         }
         isCaptureFocusFrozen = true
-        submitStillFlashPhase(pending, StillFlashPhase.APPLYING_SESSION)
+        val current = pendingCaptureBaseExposureResult
+        val previewAlreadyPrepared = current != null &&
+            current.get(CaptureResult.CONTROL_AE_MODE) == resolveStillFlashAeMode() &&
+            current.get(CaptureResult.CONTROL_AF_MODE) == afMode &&
+            current.get(CaptureResult.FLASH_MODE) == CaptureResult.FLASH_MODE_OFF
+        val continuousAf = afMode == CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE ||
+            afMode == CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO
+        // Flash mode is already applied to the normal repeating preview when selected. Reusing
+        // that confirmed result removes an otherwise redundant session round trip while the
+        // following trigger requests continue targeting the preview (and therefore Live Photo).
+        submitStillFlashPhase(
+            pending,
+            if (!previewAlreadyPrepared) StillFlashPhase.APPLYING_SESSION
+            else if (triggerAf && continuousAf) StillFlashPhase.WAITING_AF_CONVERGENCE
+            else StillFlashPhase.WAITING_AE_AF,
+        )
     }
 
     // ==================== 初始化 ====================

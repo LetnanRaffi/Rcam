@@ -2562,7 +2562,9 @@ fun MotionPhotoPlayer(
                 "MotionPhotoPlayer",
                 "Creating ExoPlayer for ${photo.id}, video=${videoFile.absolutePath}, size=${videoFile.length()}, effects=$shouldApplyVideoEffects"
             )
-            repeatMode = Player.REPEAT_MODE_ONE
+            // A full-clip loop jumps from the post-roll back to pre-roll. Hold the final
+            // frame instead; a new play gesture enters again at the aligned shutter frame.
+            repeatMode = Player.REPEAT_MODE_OFF
             if (shouldApplyVideoEffects) {
                 setVideoEffects(listOf(videoLutEffect))
             }
@@ -2596,8 +2598,8 @@ fun MotionPhotoPlayer(
                 exoPlayer.setMediaItem(MediaItem.fromUri(Uri.fromFile(videoFile)))
                 exoPlayer.prepare()
             }
-            // Enter at the shutter frame so the still-to-motion transition does not jump
-            // back into the pre-roll. ExoPlayer's full-clip loop keeps pre-roll accessible.
+            // Enter at the matched shutter frame so the still-to-motion transition remains
+            // spatially continuous. External galleries still receive the complete clip.
             exoPlayer.seekTo((primaryTimestampUs / 1000L).coerceAtLeast(0L))
             exoPlayer.playWhenReady = true
             exoPlayer.play()

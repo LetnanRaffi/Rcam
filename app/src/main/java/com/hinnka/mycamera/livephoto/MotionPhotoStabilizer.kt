@@ -1,5 +1,6 @@
 package com.hinnka.mycamera.livephoto
 
+import android.graphics.BitmapFactory
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaExtractor
@@ -24,6 +25,8 @@ internal object MotionPhotoStabilizer {
     private const val TIME_LIMIT_MS = 60_000L
     private const val MAX_FRAMES = 180
     private const val ANALYSIS_WIDTH = 256
+    private const val MINIMUM_CROP = 0.78f
+    private const val MINIMUM_STRENGTH = 0.28f
 
     enum class Status { STABILIZED_GLOBAL, REDUCED_MODEL, ALREADY_STABLE, ORIGINAL_FALLBACK }
 
@@ -46,10 +49,17 @@ internal object MotionPhotoStabilizer {
         val hadAudio: Boolean,
         val framePtsUs: List<Long>,
         val cropScale: Float,
+        val stabilizationStrength: Float,
         val unreliablePairs: Int,
+        val affinePairs: Int,
+        val photoAligned: Boolean,
     )
 
-    suspend fun stabilize(input: File, primaryTimestampUs: Long): Result = withContext(Dispatchers.IO) {
+    suspend fun stabilize(
+        input: File,
+        primaryTimestampUs: Long,
+        referencePhoto: File? = null,
+    ): Result = withContext(Dispatchers.IO) {
         val start = SystemClock.elapsedRealtime()
         var output: File? = null
         var videoOnly: File? = null
@@ -59,7 +69,18 @@ internal object MotionPhotoStabilizer {
             output = outputFile
             val videoOnlyFile = File.createTempFile("motion_video_", ".mp4", input.parentFile)
             videoOnly = videoOnlyFile
-            val analysis = analyze(input, primaryTimestampUs, start)
+            val analysis = analyze(input, primaryTimestampUs, referencePhoto, start)
+            val effectivelyStable = analysis.corrections.all {
+                max(abs(it.x), abs(it.y)) < .25f && abs(it.rotationRadians) < .002f &&
+                    abs(it.scale - 1f) < .002f && max(abs(it.stretch), abs(it.shear)) < .0015f
+            }
+            if (effectivelyStable) {
+                outputFile.delete()
+                output = null
+                return@withContext Result(
+                    input, primaryTimestampUs, false, "trajectory already stable", Status.ALREADY_STABLE,
+                )
+            }
             encode(input, videoOnlyFile, analysis, start)
             remux(input, videoOnlyFile, outputFile, analysis, start)
             validate(input, outputFile, analysis, start)
@@ -70,13 +91,17 @@ internal object MotionPhotoStabilizer {
             val maxTranslation = analysis.corrections.maxOf { max(abs(it.x), abs(it.y)) }
             val maxRotation = analysis.corrections.maxOf { abs(it.rotationRadians) }
             val maxScaleChange = analysis.corrections.maxOf { abs(it.scale - 1f) }
+            val maxAffine = analysis.corrections.maxOf { max(abs(it.stretch), abs(it.shear)) }
             val status = when {
-                maxTranslation < 0.25f && maxRotation < 0.002f && maxScaleChange < 0.002f -> Status.ALREADY_STABLE
-                analysis.unreliablePairs > 0 -> Status.REDUCED_MODEL
+                maxTranslation < 0.25f && maxRotation < 0.002f &&
+                    maxScaleChange < 0.002f && maxAffine < 0.0015f -> Status.ALREADY_STABLE
+                analysis.unreliablePairs > 0 || analysis.stabilizationStrength < .98f -> Status.REDUCED_MODEL
                 else -> Status.STABILIZED_GLOBAL
             }
             PLog.i(TAG, "status=$status frames=${analysis.corrections.size} crop=${analysis.cropScale} " +
                 "maxShiftAnalysisPx=$maxTranslation maxRotationRad=$maxRotation " +
+                "maxAffine=$maxAffine strength=${analysis.stabilizationStrength} " +
+                "affinePairs=${analysis.affinePairs} photoAligned=${analysis.photoAligned} " +
                 "unreliablePairs=${analysis.unreliablePairs} elapsedMs=${SystemClock.elapsedRealtime() - start}")
             Result(outputFile, mappedTimestamp, status != Status.ALREADY_STABLE,
                 if (status == Status.REDUCED_MODEL) "unreliable frame pairs" else null, status)
@@ -101,7 +126,12 @@ internal object MotionPhotoStabilizer {
         check(SystemClock.elapsedRealtime() - start < TIME_LIMIT_MS) { "stabilization timeout" }
     }
 
-    private suspend fun analyze(input: File, primaryTimestampUs: Long, start: Long): Analysis {
+    private suspend fun analyze(
+        input: File,
+        primaryTimestampUs: Long,
+        referencePhoto: File?,
+        start: Long,
+    ): Analysis {
         val extractor = MediaExtractor()
         var decoder: MediaCodec? = null
         try {
@@ -126,10 +156,12 @@ internal object MotionPhotoStabilizer {
             var sentEos = false
             var receivedEos = false
             var previous: ByteArray? = null
-            val motions = ArrayList<MotionPhotoMotion.Shift>()
+            val motions = ArrayList<MotionPhotoMotion.Shift?>()
             val framePts = ArrayList<Long>()
             val cuts = HashSet<Int>()
             var unreliablePairs = 0
+            var primaryGray: ByteArray? = null
+            var primaryDistanceUs = Long.MAX_VALUE
             var firstPts = -1L
             var lastPts = -1L
             var count = 0
@@ -156,20 +188,18 @@ internal object MotionPhotoStabilizer {
                             finally { image.close() }
                         if (firstPts < 0) firstPts = info.presentationTimeUs
                         lastPts = info.presentationTimeUs
+                        val shutterDistance = abs(info.presentationTimeUs - primaryTimestampUs)
+                        if (shutterDistance < primaryDistanceUs) {
+                            primaryDistanceUs = shutterDistance
+                            primaryGray = gray
+                        }
                         previous?.let { old ->
                             val motion = MotionPhotoMotion.estimate(old, gray, ANALYSIS_WIDTH, analysisHeight)
                             if (motion == null) {
                                 unreliablePairs++
-                                // A blurred or dark frame is not necessarily a scene cut. Keep
-                                // the path continuous unless the whole image changed abruptly.
-                                var difference = 0L
-                                for (pixel in gray.indices step 4) {
-                                    difference += abs((gray[pixel].toInt() and 0xff) -
-                                        (old[pixel].toInt() and 0xff))
-                                }
-                                if (difference * 4 / gray.size > 55) cuts.add(count)
+                                if (MotionPhotoMotion.isSceneCut(old, gray)) cuts.add(count)
                             }
-                            motions.add(motion ?: MotionPhotoMotion.Shift(0f, 0f))
+                            motions.add(motion)
                         }
                         previous = gray
                         framePts.add(info.presentationTimeUs)
@@ -180,19 +210,52 @@ internal object MotionPhotoStabilizer {
                     decoder.releaseOutputBuffer(index, false)
                 }
             }
-            require(motions.size - unreliablePairs >= max(3, motions.size / 2)) {
+            require(motions.size - unreliablePairs >= max(3, motions.size * 2 / 3)) {
                 "insufficient background features"
             }
             require(framePts.zipWithNext().all { (a, b) -> b > a }) { "non-monotonic source PTS" }
+            val repairedMotions = MotionPhotoMotion.repair(motions, cuts)
+                ?: error("unreliable motion run")
             val primaryFrame = framePts.indices.minBy { abs(framePts[it] - primaryTimestampUs) }
-            val corrections = MotionPhotoMotion.corrections(
-                motions, ANALYSIS_WIDTH, analysisHeight, primaryFrame, cuts)
+            val stillGray = referencePhoto?.takeIf { it.isFile && it.length() > 0L }?.let {
+                loadStillLuma(it, ANALYSIS_WIDTH, analysisHeight)
+            }
+            val photoAlignment = if (stillGray != null && primaryGray != null) {
+                MotionPhotoMotion.estimate(
+                    primaryGray, stillGray, ANALYSIS_WIDTH, analysisHeight, alignment = true,
+                )?.takeIf { alignment ->
+                    alignment.inlierRatio >= .38f && alignment.residual <= 1.8f &&
+                        MotionPhotoWarpGeometry.cropScale(
+                            listOf(alignment), width, height, analysisHeight,
+                        ) >= .80f
+                }
+            } else null
+            var corrections = MotionPhotoMotion.corrections(
+                repairedMotions, ANALYSIS_WIDTH, analysisHeight, primaryFrame, cuts,
+                framePtsUs = framePts, photoAlignment = photoAlignment)
                 ?: error("motion exceeds crop or clip too short")
             require(firstPts >= 0 && lastPts > firstPts && corrections.size == count)
-            val cropScale = MotionPhotoWarpGeometry.cropScale(corrections, width, height, analysisHeight)
-            require(cropScale >= 0.72f) { "correction exceeds crop budget" }
+            var cropScale = MotionPhotoWarpGeometry.cropScale(corrections, width, height, analysisHeight)
+            var strength = 1f
+            if (cropScale < MINIMUM_CROP) {
+                var low = 0f
+                var high = 1f
+                repeat(14) {
+                    val candidate = (low + high) * .5f
+                    val candidateCrop = MotionPhotoWarpGeometry.cropScale(
+                        MotionPhotoMotion.withStrength(corrections, candidate), width, height, analysisHeight,
+                    )
+                    if (candidateCrop >= MINIMUM_CROP) low = candidate else high = candidate
+                }
+                strength = low
+                require(strength >= MINIMUM_STRENGTH) { "correction exceeds crop budget" }
+                corrections = MotionPhotoMotion.withStrength(corrections, strength)
+                cropScale = MotionPhotoWarpGeometry.cropScale(corrections, width, height, analysisHeight)
+            }
             return Analysis(corrections, firstPts, lastPts, width, height, analysisHeight, rotation,
-                audio, framePts, cropScale, unreliablePairs)
+                audio, framePts, cropScale, strength, unreliablePairs,
+                repairedMotions.count { it.model == MotionPhotoMotion.ModelKind.AFFINE },
+                photoAlignment != null)
         } finally {
             runCatching { decoder?.stop() }
             decoder?.release()
@@ -215,6 +278,49 @@ internal object MotionPhotoStabilizer {
         return result
     }
 
+    /** Decodes only a bounded preview and center-crops it to the Motion Photo video geometry. */
+    private fun loadStillLuma(file: File, width: Int, height: Int): ByteArray? = runCatching {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+        require(bounds.outWidth > 0 && bounds.outHeight > 0)
+        var sampleSize = 1
+        while (max(bounds.outWidth, bounds.outHeight) / sampleSize > 1400) sampleSize *= 2
+        val bitmap = BitmapFactory.decodeFile(file.absolutePath, BitmapFactory.Options().apply {
+            inSampleSize = sampleSize
+            inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888
+        }) ?: return@runCatching null
+        try {
+            val pixels = IntArray(bitmap.width * bitmap.height)
+            bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+            val targetAspect = width.toFloat() / height
+            val sourceAspect = bitmap.width.toFloat() / bitmap.height
+            val cropWidth: Float
+            val cropHeight: Float
+            if (sourceAspect > targetAspect) {
+                cropHeight = bitmap.height.toFloat()
+                cropWidth = cropHeight * targetAspect
+            } else {
+                cropWidth = bitmap.width.toFloat()
+                cropHeight = cropWidth / targetAspect
+            }
+            val left = (bitmap.width - cropWidth) * .5f
+            val top = (bitmap.height - cropHeight) * .5f
+            ByteArray(width * height) { index ->
+                val x = index % width
+                val y = index / width
+                val sourceX = (left + (x + .5f) * cropWidth / width).toInt().coerceIn(0, bitmap.width - 1)
+                val sourceY = (top + (y + .5f) * cropHeight / height).toInt().coerceIn(0, bitmap.height - 1)
+                val color = pixels[sourceY * bitmap.width + sourceX]
+                val red = color shr 16 and 255
+                val green = color shr 8 and 255
+                val blue = color and 255
+                ((red * 54 + green * 183 + blue * 19) shr 8).toByte()
+            }
+        } finally {
+            bitmap.recycle()
+        }
+    }.getOrNull()
+
     private suspend fun encode(input: File, output: File, analysis: Analysis, start: Long) {
         val extractor = MediaExtractor()
         var decoder: MediaCodec? = null
@@ -229,9 +335,20 @@ internal object MotionPhotoStabilizer {
             extractor.selectTrack(track)
             val target = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, analysis.width, analysis.height).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-                setInteger(MediaFormat.KEY_BIT_RATE, ((analysis.width.toLong() * analysis.height * 5).coerceIn(8_000_000, 16_000_000)).toInt())
-                setInteger(MediaFormat.KEY_FRAME_RATE, 30)
+                val sourceBitrate = if (sourceFormat.containsKey(MediaFormat.KEY_BIT_RATE)) {
+                    sourceFormat.getInteger(MediaFormat.KEY_BIT_RATE)
+                } else 8_000_000
+                setInteger(MediaFormat.KEY_BIT_RATE, max(sourceBitrate,
+                    (analysis.width.toLong() * analysis.height * 5).toInt()).coerceIn(8_000_000, 20_000_000))
+                val sourceFrameRate = if (sourceFormat.containsKey(MediaFormat.KEY_FRAME_RATE)) {
+                    sourceFormat.getInteger(MediaFormat.KEY_FRAME_RATE)
+                } else 30
+                setInteger(MediaFormat.KEY_FRAME_RATE, sourceFrameRate.coerceIn(24, 60))
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+                for (key in listOf(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.KEY_COLOR_TRANSFER,
+                    MediaFormat.KEY_COLOR_RANGE)) {
+                    if (sourceFormat.containsKey(key)) setInteger(key, sourceFormat.getInteger(key))
+                }
             }
             encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
             encoder.configure(target, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)

@@ -23,6 +23,13 @@ internal class MotionPhotoWarpRenderer(
     private var eglSurface = EGL14.EGL_NO_SURFACE
     private var texture = 0
     private var program = 0
+    private var positionLocation = -1
+    private var textureLocation = -1
+    private var textureMatrixLocation = -1
+    private var offsetLocation = -1
+    private var frameSizeLocation = -1
+    private var inverseLinearLocation = -1
+    private var cropLocation = -1
     private val vertices = ByteBuffer.allocateDirect(8 * 4)
         .order(ByteOrder.nativeOrder()).asFloatBuffer().apply {
             put(floatArrayOf(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f))
@@ -76,17 +83,15 @@ internal class MotionPhotoWarpRenderer(
                 uniform mat4 uTextureMatrix;
                 uniform vec2 uOffset;
                 uniform vec2 uFrameSize;
-                uniform float uAngle;
-                uniform float uScale;
+                uniform vec4 uInverseLinear;
                 uniform float uCrop;
                 varying vec2 vUv;
                 void main() {
                     vec2 outputPx = vec2((vUv.x - 0.5) * uFrameSize.x,
                         (0.5 - vUv.y) * uFrameSize.y) * uCrop - uOffset;
-                    float c = cos(uAngle);
-                    float s = sin(uAngle);
-                    vec2 sourcePx = vec2(c * outputPx.x + s * outputPx.y,
-                        -s * outputPx.x + c * outputPx.y) / uScale;
+                    vec2 sourcePx = vec2(
+                        uInverseLinear.x * outputPx.x + uInverseLinear.y * outputPx.y,
+                        uInverseLinear.z * outputPx.x + uInverseLinear.w * outputPx.y);
                     vec2 sourceUv = clamp(vec2(0.5 + sourcePx.x / uFrameSize.x,
                         0.5 - sourcePx.y / uFrameSize.y), vec2(0.001), vec2(0.999));
                     gl_FragColor = texture2D(uTexture, (uTextureMatrix * vec4(sourceUv, 0.0, 1.0)).xy);
@@ -101,6 +106,16 @@ internal class MotionPhotoWarpRenderer(
             check(linked[0] == GLES20.GL_TRUE) { GLES20.glGetProgramInfoLog(program) }
             GLES20.glDeleteShader(vertex)
             GLES20.glDeleteShader(fragment)
+            positionLocation = GLES20.glGetAttribLocation(program, "aPosition")
+            textureLocation = GLES20.glGetUniformLocation(program, "uTexture")
+            textureMatrixLocation = GLES20.glGetUniformLocation(program, "uTextureMatrix")
+            offsetLocation = GLES20.glGetUniformLocation(program, "uOffset")
+            frameSizeLocation = GLES20.glGetUniformLocation(program, "uFrameSize")
+            inverseLinearLocation = GLES20.glGetUniformLocation(program, "uInverseLinear")
+            cropLocation = GLES20.glGetUniformLocation(program, "uCrop")
+            check(positionLocation >= 0 && textureLocation >= 0 && textureMatrixLocation >= 0 &&
+                offsetLocation >= 0 && frameSizeLocation >= 0 && inverseLinearLocation >= 0 &&
+                cropLocation >= 0) { "warp shader locations unavailable" }
         } catch (e: Throwable) {
             close()
             throw e
@@ -124,20 +139,19 @@ internal class MotionPhotoWarpRenderer(
         GLES20.glUseProgram(program)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, texture)
-        GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uTexture"), 0)
-        GLES20.glUniformMatrix4fv(GLES20.glGetUniformLocation(program, "uTextureMatrix"), 1, false, matrix, 0)
-        GLES20.glUniform2f(GLES20.glGetUniformLocation(program, "uOffset"),
+        GLES20.glUniform1i(textureLocation, 0)
+        GLES20.glUniformMatrix4fv(textureMatrixLocation, 1, false, matrix, 0)
+        GLES20.glUniform2f(offsetLocation,
             shift.x * width / 256f, shift.y * height / analysisHeight)
-        GLES20.glUniform2f(GLES20.glGetUniformLocation(program, "uFrameSize"), width.toFloat(), height.toFloat())
-        GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uAngle"), shift.rotationRadians)
-        GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uScale"), shift.scale)
-        GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uCrop"), cropScale)
+        GLES20.glUniform2f(frameSizeLocation, width.toFloat(), height.toFloat())
+        val inverse = checkNotNull(shift.inverseLinear()) { "singular warp transform" }
+        GLES20.glUniform4f(inverseLinearLocation, inverse[0], inverse[1], inverse[2], inverse[3])
+        GLES20.glUniform1f(cropLocation, cropScale)
         vertices.position(0)
-        val location = GLES20.glGetAttribLocation(program, "aPosition")
-        GLES20.glEnableVertexAttribArray(location)
-        GLES20.glVertexAttribPointer(location, 2, GLES20.GL_FLOAT, false, 0, vertices)
+        GLES20.glEnableVertexAttribArray(positionLocation)
+        GLES20.glVertexAttribPointer(positionLocation, 2, GLES20.GL_FLOAT, false, 0, vertices)
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
-        GLES20.glDisableVertexAttribArray(location)
+        GLES20.glDisableVertexAttribArray(positionLocation)
         check(GLES20.glGetError() == GLES20.GL_NO_ERROR) { "warp draw failed" }
         check(EGLExt.eglPresentationTimeANDROID(display, eglSurface, timestampUs * 1_000))
         check(EGL14.eglSwapBuffers(display, eglSurface)) { "encoder surface swap failed" }

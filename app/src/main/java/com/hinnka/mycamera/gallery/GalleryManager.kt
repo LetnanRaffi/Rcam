@@ -2102,7 +2102,11 @@ object GalleryManager {
             }
             val result = if (stabilizeMotionPhoto) {
                 try {
-                    MotionPhotoStabilizer.stabilize(original, livePhotoResult.second)
+                    MotionPhotoStabilizer.stabilize(
+                        original,
+                        livePhotoResult.second,
+                        getOriginalImageFile(context, photoId),
+                    )
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
