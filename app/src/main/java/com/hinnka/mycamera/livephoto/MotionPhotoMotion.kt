@@ -78,6 +78,7 @@ internal object MotionPhotoMotion {
         width: Int,
         height: Int,
         alignment: Boolean = false,
+        orientationPrior: MotionPhotoOrientationTrack.RotationPrior? = null,
     ): Shift? {
         require(previous.size >= width * height && current.size >= width * height)
         val previousPyramid = pyramid(previous, width, height)
@@ -112,6 +113,18 @@ internal object MotionPhotoMotion {
             similarity.inliers.size >= translation.inliers.size * 0.85
         ) similarity else translation
 
+        // A geomagnetic orientation estimate is never applied blindly. It only introduces a
+        // constrained rotation candidate, and the tracked image points must independently show
+        // lower residual and broad support before it can replace the visual model.
+        if (!alignment && orientationPrior != null && orientationPrior.confidence >= .45f) {
+            sensorRotationCandidate(matches, -orientationPrior.radians.toDouble(), threshold)?.let { sensor ->
+                if (sensor.inliers.size >= max(10, (translation.inliers.size * .82).toInt()) &&
+                    sensor.residual < translation.residual * .94 &&
+                    sensor.residual <= selected.residual * 1.02
+                ) selected = sensor
+            }
+        }
+
         if (matches.size >= 16) {
             val affine = affineRansac(matches, width, height, threshold, alignment)
             if (affine != null &&
@@ -126,6 +139,23 @@ internal object MotionPhotoMotion {
         if (ratio < if (alignment) 0.34f else 0.42f) return null
         return selected.transform.toShift(ratio, selected.residual.toFloat(), selected.kind)
             .takeIf { shiftIsSane(it, width, height, alignment) }
+    }
+
+    private fun sensorRotationCandidate(
+        matches: List<Match>,
+        rotation: Double,
+        threshold: Double,
+    ): Candidate? {
+        if (!rotation.isFinite() || abs(rotation) > .14) return null
+        val cosine = kotlin.math.cos(rotation)
+        val sine = kotlin.math.sin(rotation)
+        val translationsX = matches.map { it.u - (cosine * it.x - sine * it.y) }.sorted()
+        val translationsY = matches.map { it.v - (sine * it.x + cosine * it.y) }.sorted()
+        val transform = Affine(
+            cosine, -sine, sine, cosine,
+            translationsX[translationsX.size / 2], translationsY[translationsY.size / 2],
+        )
+        return candidate(transform, matches, threshold, ModelKind.SIMILARITY)
     }
 
     /** A normalized correlation avoids treating a flash/exposure change as a scene cut. */

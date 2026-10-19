@@ -844,6 +844,7 @@ fun CameraScreen(
     ) {
 
         val backgroundPainter = rememberBackgroundPainter(viewModel)
+        val glassBackdrop = rememberLiquidGlassBackdrop()
 
         val isVideoMode = state.captureMode == CaptureMode.VIDEO
         val isPhotoStyleMode = state.captureMode != CaptureMode.VIDEO
@@ -943,6 +944,7 @@ fun CameraScreen(
                 onSettingsClick = {
                     activePanel = if (activePanel == ActivePanel.SETTINGS) ActivePanel.NONE else ActivePanel.SETTINGS
                 },
+                glassBackdrop = glassBackdrop,
                 modifier = Modifier
                     .padding(top = topSafePadding)
                     .offset(y = topBarOffset)
@@ -1583,6 +1585,7 @@ fun CameraScreen(
                 } else {
                     null
                 },
+                glassBackdrop = glassBackdrop,
                 modifier = modifier
             )
         }
@@ -1590,23 +1593,29 @@ fun CameraScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .paint(backgroundPainter, contentScale = ContentScale.Crop)
                 .navigationBarsPadding(),
         ) {
-            // The viewfinder is always the bottom layer. Its selected aspect ratio is fitted
-            // to the full available area before camera controls are overlaid.
             Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(cardHeight)
-                    .align(Alignment.TopCenter)
-                    .offset(y = viewfinderTop)
-                    .onGloballyPositioned { coordinates ->
-                        viewfinderAreaBounds = coordinates.boundsInRoot()
-                    },
-                contentAlignment = Alignment.Center
+                    .fillMaxSize()
+                    .paint(backgroundPainter, contentScale = ContentScale.Crop)
+                    .liquidGlassBackdropSource(glassBackdrop)
             ) {
-                viewfinder()
+                // Record only the preview and its background. Glass controls sample this layer
+                // without recursively capturing themselves or forcing a CPU readback.
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(cardHeight)
+                        .align(Alignment.TopCenter)
+                        .offset(y = viewfinderTop)
+                        .onGloballyPositioned { coordinates ->
+                            viewfinderAreaBounds = coordinates.boundsInRoot()
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    viewfinder()
+                }
             }
 
             topBar()
@@ -2000,6 +2009,7 @@ private fun Controls(
     onCaptureTap: () -> Unit,
     onGalleryClick: () -> Unit,
     sideControlInset: Dp?,
+    glassBackdrop: LiquidGlassBackdrop,
     modifier: Modifier = Modifier.fillMaxSize()
 ) {
     val captureButtonStyle by viewModel.captureButtonStyle.collectAsState()
@@ -2154,6 +2164,7 @@ private fun Controls(
                 enabled = modeSwitchEnabled &&
                     !state.videoRecordingState.isRecording &&
                     !state.videoRecordingState.isProcessing,
+                glassBackdrop = glassBackdrop,
                 onModeSelected = onCaptureModeSelected
             )
         }
@@ -2479,21 +2490,25 @@ private fun CaptureModeSwitcher(
     shootingMode: CameraShootingMode,
     professionalModeEnabled: Boolean,
     enabled: Boolean,
+    glassBackdrop: LiquidGlassBackdrop,
     onModeSelected: (CameraShootingMode) -> Unit
 ) {
-    BoxWithConstraints(
+    LiquidGlassSurface(
+        backdrop = glassBackdrop,
         modifier = Modifier
             .width(228.dp)
-            .height(CameraControlsLayoutDefaults.ModeSwitcherHeight)
-            .clip(RoundedCornerShape(18.dp))
-            .background(Color.Black.copy(alpha = 0.28f))
-            .border(
-                width = 0.5.dp,
-                color = Color.White.copy(alpha = 0.18f),
-                shape = RoundedCornerShape(18.dp)
-            )
-            .padding(3.dp)
+            .height(CameraControlsLayoutDefaults.ModeSwitcherHeight),
+        cornerRadius = 18.dp,
+        style = LiquidGlassStyle(
+            blurRadius = 10.dp,
+            refractionHeight = 5.dp,
+            refractionAmount = 3.dp,
+            saturation = 1.15f,
+            tint = Color.Black.copy(alpha = .32f),
+            fallbackColor = Color(0xE6181B20),
+        ),
     ) {
+        BoxWithConstraints(Modifier.fillMaxSize().padding(3.dp)) {
         val knobWidth = maxWidth / 3
         val selectedIndex = when (shootingMode) {
             CameraShootingMode.PROFESSIONAL -> 0
@@ -2548,6 +2563,7 @@ private fun CaptureModeSwitcher(
                 onClick = { onModeSelected(CameraShootingMode.VIDEO) },
                 modifier = Modifier.weight(1f)
             )
+        }
         }
     }
 }

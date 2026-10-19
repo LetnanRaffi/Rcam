@@ -1,6 +1,6 @@
 <resources>
     <string name="camera_video_fps_unavailable">相机未提供有效的帧率范围，暂时无法录像。</string>
-    <string name="app_name">光子相机</string>
+    <string name="app_name">Rcam</string>
 
     <!-- Camera Controls -->
     <string name="switch_camera">切换摄像头</string>
@@ -74,7 +74,7 @@
     <!-- Zoom -->
 
     <!-- Gallery -->
-    <string name="gallery_photon">光子相册</string>
+    <string name="gallery_photon">Rcam</string>
     <string name="gallery_system">系统相册</string>
     <string name="gallery_prepare_edit_failed">无法准备这张照片用于编辑</string>
     <string name="gallery_group_today">今天</string>
@@ -479,7 +479,7 @@
     <string name="billing_feature_lifetime">一次购买，永久使用</string>
     <string name="billing_premium_get_access">获取 Pro 权益</string>
     <string name="billing_price_region_notice">具体价格以所在地区为准</string>
-    <string name="settings_premium_title">PhotonCamera Pro</string>
+    <string name="settings_premium_title">Rcam Pro</string>
     <string name="settings_premium_description">解锁全部高级滤镜并支持我们的开发工作</string>
 
     <!-- Custom Import -->
@@ -836,7 +836,7 @@
     <string name="settings_community_group_telegram_description">Telegram 群：https://t.me/photoncameraapp</string>
     <string name="settings_community_group_qq_description">QQ 群：569605452</string>
     <string name="settings_donation">捐赠</string>
-    <string name="settings_donation_description">支持 Photon Camera 的持续开发</string>
+    <string name="settings_donation_description">支持 Rcam 的持续开发</string>
     <string name="settings_check_update">检查更新</string>
     <string name="settings_check_update_description">当前版本：%1$s</string>
     <string name="settings_check_update_running">正在检查并下载更新...</string>

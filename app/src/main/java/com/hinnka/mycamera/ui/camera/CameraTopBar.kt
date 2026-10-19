@@ -27,6 +27,9 @@ import androidx.compose.ui.unit.sp
 import com.hinnka.mycamera.ui.theme.AccentColor
 import com.hinnka.mycamera.R
 import com.hinnka.mycamera.ui.components.PhysicalButton
+import com.hinnka.mycamera.ui.components.LiquidGlassBackdrop
+import com.hinnka.mycamera.ui.components.LiquidGlassStyle
+import com.hinnka.mycamera.ui.components.LiquidGlassSurface
 import com.hinnka.mycamera.video.CaptureMode
 import com.hinnka.mycamera.video.VideoAspectRatio
 import com.hinnka.mycamera.video.VideoCapabilities
@@ -56,6 +59,7 @@ fun CameraTopBar(
     onVideoResolutionClick: () -> Unit,
     onVideoFpsClick: () -> Unit,
     onSettingsClick: () -> Unit,
+    glassBackdrop: LiquidGlassBackdrop,
     modifier: Modifier = Modifier
 ) {
     if (captureMode == CaptureMode.VIDEO) {
@@ -74,15 +78,29 @@ fun CameraTopBar(
         return
     }
 
-    Row(
+    LiquidGlassSurface(
+        backdrop = glassBackdrop,
         modifier = modifier
             .fillMaxWidth()
-            .padding(top = 32.dp, bottom = 8.dp),
+            .padding(top = 18.dp, start = 12.dp, end = 12.dp)
+            .height(50.dp),
+        cornerRadius = 25.dp,
+        style = LiquidGlassStyle(
+            blurRadius = 10.dp,
+            refractionHeight = 5.dp,
+            refractionAmount = 3.dp,
+            saturation = 1.15f,
+            tint = Color.Black.copy(alpha = .3f),
+            fallbackColor = Color(0xE6181B20),
+        ),
+    ) {
+    Row(
+        modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically
     ) {
         PhysicalButton(
-            modifier = Modifier.size(36.dp),
+            modifier = Modifier.size(42.dp),
             onClick = onFlashToggle
         ) {
             Icon(
@@ -99,7 +117,7 @@ fun CameraTopBar(
         }
 
         PhysicalButton(
-            modifier = Modifier.size(36.dp),
+            modifier = Modifier.size(42.dp),
             onClick = onTimerToggle
         ) {
             if (timerSeconds > 0) {
@@ -121,7 +139,7 @@ fun CameraTopBar(
         }
 
         PhysicalButton(
-            modifier = Modifier.size(36.dp),
+            modifier = Modifier.size(42.dp),
             onClick = onLivePhotoToggle
         ) {
             Icon(
@@ -133,7 +151,7 @@ fun CameraTopBar(
         }
 
         PhysicalButton(
-            modifier = Modifier.size(36.dp),
+            modifier = Modifier.size(42.dp),
             onClick = onHistogramToggle
         ) {
             Icon(
@@ -145,7 +163,7 @@ fun CameraTopBar(
         }
 
         PhysicalButton(
-            modifier = Modifier.size(36.dp),
+            modifier = Modifier.size(42.dp),
             onClick = onSettingsClick
         ) {
             Icon(
@@ -155,6 +173,7 @@ fun CameraTopBar(
                 tint = Color.White
             )
         }
+    }
     }
 }
 

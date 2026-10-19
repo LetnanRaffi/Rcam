@@ -21,9 +21,9 @@ fun accentContentColor(color: Color): Color =
     if (color.luminance() > 0.179f) Color.Black else Color.White
 
 // 深色主题
-val DarkBackground = Color(0xFF0D0D0D)
-val DarkSurface = Color(0xFF1A1A1A)
-val DarkSurfaceVariant = Color(0xFF2D2D2D)
+val DarkBackground = Color(0xFF080A0D)
+val DarkSurface = Color(0xFF12161C)
+val DarkSurfaceVariant = Color(0xFF1B2129)
 
 // 文字颜色
 val TextPrimary = Color(0xFFFFFFFF)

@@ -59,6 +59,8 @@ internal object MotionPhotoStabilizer {
         input: File,
         primaryTimestampUs: Long,
         referencePhoto: File? = null,
+        videoStartTimestampUs: Long = 0L,
+        orientationTrack: MotionPhotoOrientationTrack? = null,
     ): Result = withContext(Dispatchers.IO) {
         val start = SystemClock.elapsedRealtime()
         var output: File? = null
@@ -69,7 +71,10 @@ internal object MotionPhotoStabilizer {
             output = outputFile
             val videoOnlyFile = File.createTempFile("motion_video_", ".mp4", input.parentFile)
             videoOnly = videoOnlyFile
-            val analysis = analyze(input, primaryTimestampUs, referencePhoto, start)
+            val analysis = analyze(
+                input, primaryTimestampUs, referencePhoto, videoStartTimestampUs,
+                orientationTrack, start,
+            )
             val effectivelyStable = analysis.corrections.all {
                 max(abs(it.x), abs(it.y)) < .25f && abs(it.rotationRadians) < .002f &&
                     abs(it.scale - 1f) < .002f && max(abs(it.stretch), abs(it.shear)) < .0015f
@@ -130,6 +135,8 @@ internal object MotionPhotoStabilizer {
         input: File,
         primaryTimestampUs: Long,
         referencePhoto: File?,
+        videoStartTimestampUs: Long,
+        orientationTrack: MotionPhotoOrientationTrack?,
         start: Long,
     ): Analysis {
         val extractor = MediaExtractor()
@@ -194,7 +201,15 @@ internal object MotionPhotoStabilizer {
                             primaryGray = gray
                         }
                         previous?.let { old ->
-                            val motion = MotionPhotoMotion.estimate(old, gray, ANALYSIS_WIDTH, analysisHeight)
+                            val previousPtsUs = framePts.last()
+                            val orientationPrior = orientationTrack?.relativeRoll(
+                                videoStartTimestampUs + previousPtsUs,
+                                videoStartTimestampUs + info.presentationTimeUs,
+                            )
+                            val motion = MotionPhotoMotion.estimate(
+                                old, gray, ANALYSIS_WIDTH, analysisHeight,
+                                orientationPrior = orientationPrior,
+                            )
                             if (motion == null) {
                                 unreliablePairs++
                                 if (MotionPhotoMotion.isSceneCut(old, gray)) cuts.add(count)

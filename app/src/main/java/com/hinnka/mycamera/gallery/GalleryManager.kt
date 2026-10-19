@@ -33,6 +33,7 @@ import com.hinnka.mycamera.hdr.UltraHdrWriter
 import com.hinnka.mycamera.hdr.UnifiedGainmapProducer
 import com.hinnka.mycamera.livephoto.MotionPhotoStabilizer
 import com.hinnka.mycamera.livephoto.MotionPhotoWriter
+import com.hinnka.mycamera.livephoto.MotionPhotoCapture
 import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
 import com.hinnka.mycamera.lut.ChromaDenoiseDefaults
 import com.hinnka.mycamera.lut.applyEffectsToVideoFile
@@ -2021,7 +2022,7 @@ object GalleryManager {
     fun completeMotionPhotoInBackground(
         context: Context,
         photoId: String,
-        livePhotoVideoDeferred: Deferred<Pair<File, Long>?>,
+        livePhotoVideoDeferred: Deferred<MotionPhotoCapture?>,
         stabilizeMotionPhoto: Boolean,
         shouldAutoSave: Boolean,
         exportFinalPhoto: suspend (MediaMetadata) -> Unit,
@@ -2061,7 +2062,7 @@ object GalleryManager {
                 // The recorder can finish after our timeout. Reclaim its temporary MP4 then.
                 livePhotoVideoDeferred.invokeOnCompletion {
                     processingScope.launch(Dispatchers.IO) {
-                        runCatching { livePhotoVideoDeferred.await()?.first?.delete() }
+                        runCatching { livePhotoVideoDeferred.await()?.file?.delete() }
                     }
                 }
                 finishProcessingPhoto(context, photoId, getOriginalImageFile(context, photoId) != null)
@@ -2072,7 +2073,7 @@ object GalleryManager {
     suspend fun saveVideo(
         context: Context,
         photoId: String,
-        livePhotoVideoDeferred: Deferred<Pair<File, Long>?>? = null,
+        livePhotoVideoDeferred: Deferred<MotionPhotoCapture?>? = null,
         stabilizeMotionPhoto: Boolean = false,
     ): MotionClipStatus {
         val photoDir = getPhotoDir(context, photoId, true)
@@ -2083,7 +2084,7 @@ object GalleryManager {
             PLog.w(TAG, "Motion Photo recorder did not provide a clip within 45 seconds")
             return MotionClipStatus.VIDEO_UNAVAILABLE
         }
-        val original = livePhotoResult.first
+        val original = livePhotoResult.file
         if (!original.isFile || original.length() == 0L) {
             PLog.w(TAG, "Motion Photo recorder produced an empty clip")
             return MotionClipStatus.VIDEO_UNAVAILABLE
@@ -2104,8 +2105,10 @@ object GalleryManager {
                 try {
                     MotionPhotoStabilizer.stabilize(
                         original,
-                        livePhotoResult.second,
+                        livePhotoResult.primaryTimestampUs,
                         getOriginalImageFile(context, photoId),
+                        livePhotoResult.videoStartTimestampUs,
+                        livePhotoResult.orientationTrack,
                     )
                 } catch (e: CancellationException) {
                     throw e
@@ -2121,7 +2124,7 @@ object GalleryManager {
             processedFile = result?.outputFile?.takeIf { it != original }
             val selected = processedFile ?: original
             val selectedTimestampUs = if (processedFile != null) result!!.primaryTimestampUs
-                else livePhotoResult.second
+                else livePhotoResult.primaryTimestampUs
 
             try {
                 publishMotionVideo(selected, videoFile)
@@ -2143,7 +2146,7 @@ object GalleryManager {
                 PLog.w(TAG, "Stabilized clip could not be published; restoring original clip")
                 publishMotionVideo(original, videoFile)
                 check(saveMetadata(context, photoId,
-                    metadata.copy(presentationTimestampUs = livePhotoResult.second))) {
+                    metadata.copy(presentationTimestampUs = livePhotoResult.primaryTimestampUs))) {
                     "Original Motion Photo timestamp was not persisted"
                 }
                 published = true

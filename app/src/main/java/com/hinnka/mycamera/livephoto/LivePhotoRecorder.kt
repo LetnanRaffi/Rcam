@@ -53,6 +53,7 @@ class LivePhotoRecorder(
     private val bufferCapacity = bufferDurationMs + postCaptureDurationMs + 2000L
     private val circularVideoRecorder = CircularSampleRecorder(bufferCapacity)
     private val circularAudioRecorder = CircularSampleRecorder(bufferCapacity)
+    private val orientationRecorder = MotionPhotoOrientationRecorder(context)
 
     @Volatile
     private var videoEncoder: MediaCodec? = null
@@ -126,6 +127,7 @@ class LivePhotoRecorder(
         lastFrameTimestampUs = 0
         captureMinimumTimestampUs = null
         acceptingTorchFrames = false
+        orientationRecorder.start()
         PLog.d(TAG, "Live Photo recording prepared")
     }
 
@@ -140,6 +142,7 @@ class LivePhotoRecorder(
         }
         circularVideoRecorder.stopRecording()
         circularAudioRecorder.stopRecording()
+        orientationRecorder.stop()
         if (isCapturing) {
             PLog.d(TAG, "Stop requested while capture in progress, delaying encoder release")
             pendingRelease = true
@@ -469,7 +472,8 @@ class LivePhotoRecorder(
     fun recordVideo(
         imageTimestampUs: Long? = null,
         captureStartTimestampUs: Long? = null,
-        onCaptured: (File, Long) -> Unit
+        frontFacing: Boolean = false,
+        onCaptured: (MotionPhotoCapture?) -> Unit
     ) {
         val centerTs = imageTimestampUs ?: snapshotTimestampUs
         val startTimeUs = centerTs - bufferDurationMs * 1000
@@ -489,7 +493,7 @@ class LivePhotoRecorder(
                 val currentAudioSamples = circularAudioRecorder.snapshot()
                 if (currentVideoSamples.isEmpty()) {
                     PLog.e(TAG, "No video samples in buffer")
-                    onCaptured(File("error"), 0L)
+                    onCaptured(null)
                     return@launch
                 }
 
@@ -521,7 +525,7 @@ class LivePhotoRecorder(
 
                 if (startIndex == -1 || videoFormat == null) {
                     PLog.e(TAG, "No keyframe or format to mux (format=${videoFormat != null})")
-                    onCaptured(File("error"), 0L) // Notify failure to prevent hang
+                    onCaptured(null) // Notify failure to prevent hang
                     return@launch
                 }
 
@@ -535,7 +539,7 @@ class LivePhotoRecorder(
 
                 if (muxVideoSamples.size < 2) {
                     PLog.e(TAG, "Too few video samples for video: ${muxVideoSamples.size}")
-                    onCaptured(File("error"), 0L) // Notify failure
+                    onCaptured(null) // Notify failure
                     return@launch
                 }
 
@@ -571,14 +575,23 @@ class LivePhotoRecorder(
                 // 计算拍照时刻在视频中的相对时间戳
                 val presentationTimestampUs = centerTs - finalVideoStartTs
 
-                onCaptured(videoFile, presentationTimestampUs)
+                onCaptured(
+                    MotionPhotoCapture(
+                        file = videoFile,
+                        primaryTimestampUs = presentationTimestampUs,
+                        videoStartTimestampUs = finalVideoStartTs,
+                        orientationTrack = orientationRecorder.snapshot(
+                            finalVideoStartTs, finalVideoEndTs, frontFacing,
+                        ),
+                    )
+                )
 
             } catch (e: Exception) {
                 PLog.e(TAG, "Failed to finish Live Photo capture: center=$centerTs, end=$endTimeUs, " +
                     "preview=$lastFrameTimestampUs, encoded=${latestEncodedVideoTimestampUs.value}, " +
                     "retainedStart=$captureStartTimestampUs, running=$isRunning, " +
                     "draining=${videoDrainJob?.isActive}", e)
-                onCaptured(File("error"), 0L)
+                onCaptured(null)
             } finally {
                 captureStartTimestampUs?.let(::releaseCaptureRetention)
                 if (captureMinimumTimestampUs == captureStartTimestampUs) {

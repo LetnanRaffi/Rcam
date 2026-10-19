@@ -38,6 +38,7 @@ import com.hinnka.mycamera.frame.FrameInfo
 import com.hinnka.mycamera.frame.FramePreviewFactory
 import com.hinnka.mycamera.frame.FramePreviewSelection
 import com.hinnka.mycamera.gallery.GalleryManager
+import com.hinnka.mycamera.livephoto.MotionPhotoCapture
 import com.hinnka.mycamera.gallery.MediaMetadata
 import com.hinnka.mycamera.gallery.PhotoSavePath
 import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
@@ -155,7 +156,7 @@ private data class CaptureSettingsSnapshot(
     // Exposure matching needs the unfiltered source; UI placeholders need the displayed look.
     @Volatile var originalThumbnail: Bitmap? = null,
     @Volatile var displayThumbnail: Bitmap? = null,
-    var livePhotoVideo: CompletableDeferred<Pair<File, Long>?>? = null,
+    var livePhotoVideo: CompletableDeferred<MotionPhotoCapture?>? = null,
     @Volatile var motionVideoOwnedByGallery: Boolean = false,
     var captureId: Long = 0L,
     @Volatile var captureCompleted: Boolean = false,
@@ -2135,12 +2136,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 shotSettings.state = photo.state
                 if (photo.state.useLivePhoto) {
                     val first = photo.frames.first()
-                    shotSettings.livePhotoVideo = CompletableDeferred<Pair<File, Long>?>().also { deferred ->
+                    shotSettings.livePhotoVideo = CompletableDeferred<MotionPhotoCapture?>().also { deferred ->
                         cameraController.recordLivePhotoVideo(
                             first.image.timestamp / 1000,
                             first.captureInfo.livePhotoVideoStartTimestampUs,
-                        ) { file, timestamp ->
-                            deferred.complete(if (file.name == "error") null else file to timestamp)
+                        ) { capture ->
+                            deferred.complete(capture)
                         }
                     }
                 }
@@ -2155,7 +2156,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                             )
                             // Only the capture queue owns the MP4 when no completion job was started.
                             withContext(Dispatchers.IO) {
-                                shotSettings.livePhotoVideo?.await()?.first?.delete()
+                                shotSettings.livePhotoVideo?.await()?.file?.delete()
                             }
                         }
                         shotSettings.processingFinished = true
@@ -2362,7 +2363,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
-        cameraController.onLivePhotoVideoCaptured = { file, timestamp ->
+        cameraController.onLivePhotoVideoCaptured = { _ ->
             // Global listener still available for other UI needs if any
         }
 

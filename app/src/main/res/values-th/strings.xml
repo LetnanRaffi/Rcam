@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Photon Camera</string>
+    <string name="app_name">Rcam</string>
 
     <!-- Camera Controls -->
     <string name="switch_camera">สลับกล้อง</string>
@@ -69,7 +69,7 @@
     <!-- Zoom -->
 
     <!-- Gallery -->
-    <string name="gallery_photon">อัลบั้มภาพโฟตอน</string>
+    <string name="gallery_photon">Rcam</string>
     <string name="gallery_group_today">วันนี้</string>
     <string name="gallery_group_yesterday">เมื่อวาน</string>
     <string name="permission_required_gallery">จำเป็นต้องเข้าถึงสื่อเพื่อแสดงอัลบั้มของระบบ</string>
@@ -278,7 +278,7 @@
     <string name="billing_feature_lifetime">ซื้อครั้งเดียว ใช้ได้ตลอดชีพ</string>
     <string name="billing_premium_get_access">รับสิทธิ์เข้าถึงพรีเมียม</string>
     <string name="billing_price_region_notice">ราคาแตกต่างกันไปตามภูมิภาค</string>
-    <string name="settings_premium_title">PhotonCamera Pro</string>
+    <string name="settings_premium_title">Rcam Pro</string>
     <string name="settings_premium_description">ปลดล็อก LUT พรีเมียมทั้งหมดและสนับสนุนเรา</string>
 
     <!-- Custom Import -->
@@ -605,7 +605,7 @@
     <string name="settings_community_group_telegram_description">กลุ่มโทรเลข: https://t.me/photoncameraapp</string>
     <string name="settings_community_group_qq_description">กลุ่ม QQ: 569605452</string>
     <string name="settings_donation">บริจาค</string>
-    <string name="settings_donation_description">สนับสนุนการพัฒนา Photon Camera</string>
+    <string name="settings_donation_description">สนับสนุนการพัฒนา Rcam</string>
     <string name="settings_check_update">ตรวจสอบการอัปเดต</string>
     <string name="settings_check_update_description">เวอร์ชันปัจจุบัน: %1$s</string>
     <string name="settings_check_update_running">กำลังตรวจสอบและดาวน์โหลดการอัปเดต...</string>

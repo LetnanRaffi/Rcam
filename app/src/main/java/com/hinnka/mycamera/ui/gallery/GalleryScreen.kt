@@ -238,8 +238,7 @@ fun GalleryScreen(
                             Text(
                                 text = stringResource(R.string.gallery),
                                 color = Color.White,
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold
+                                style = MaterialTheme.typography.titleLarge,
                             )
                         }
                     },
@@ -303,7 +302,7 @@ fun GalleryScreen(
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = Color(0xFF151515)
+                        containerColor = Color(0xEB0C0F14)
                     )
                 )
                 if (!isSelectionMode) {
@@ -326,7 +325,7 @@ fun GalleryScreen(
                 exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
             ) {
                 Surface(
-                    color = Color(0xFF1A1A1A),
+                    color = Color(0xF212161C),
                     modifier = Modifier
                         .fillMaxWidth()
                         .navigationBarsPadding()
@@ -527,7 +526,7 @@ fun GalleryScreen(
                 }
             }
         },
-        containerColor = Color(0xFF151515),
+        containerColor = MaterialTheme.colorScheme.background,
         modifier = modifier
     ) { paddingValues ->
         PullToRefreshBox(

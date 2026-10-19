@@ -1,6 +1,6 @@
 <resources>
     <string name="camera_video_fps_unavailable">カメラ側から有効なフレームレート範囲が取得できないため、録画できません。</string>
-    <string name="app_name">Photon Camera</string>
+    <string name="app_name">Rcam</string>
     
     <!-- Camera Controls -->
     <string name="switch_camera">カメラを切り替え</string>
@@ -179,7 +179,7 @@
     <string name="billing_feature_lifetime">買い切り、永久利用可能</string>
     <string name="billing_premium_get_access">プレミアムアクセスを取得</string>
     <string name="billing_price_region_notice">価格は地域によって異なります</string>
-    <string name="settings_premium_title">PhotonCamera Pro</string>
+    <string name="settings_premium_title">Rcam Pro</string>
     <string name="settings_premium_description">すべてのプレミアムLUTをアンロックして開発を支援してください。</string>
     
     <!-- Custom Import -->
@@ -309,7 +309,7 @@
     
     <!-- About & Donation -->
     <string name="settings_donation">寄付</string>
-    <string name="settings_donation_description">Photon Cameraの開発を支援する</string>
+    <string name="settings_donation_description">Rcamの開発を支援する</string>
     <string name="update_install_permission_hint">このアプリに「不明なアプリのインストール」を許可してから、もう一度「インストール」をタップしてください。</string>
     <string name="settings_default_focal_length">デフォルトの焦点距離</string>
     <string name="settings_default_focal_length_description">アプリ起動時に自動的に切り替える焦点距離を設定します。</string>
@@ -381,7 +381,7 @@
     <string name="video_microphone_hdmi">HDMI入力</string>
     <string name="video_microphone_line_in">ライン入力</string>
     <string name="video_microphone_external">外部</string>
-    <string name="gallery_photon">Photon</string>
+    <string name="gallery_photon">Rcam</string>
     <string name="gallery_system">システム</string>
     <string name="gallery_prepare_edit_failed">この写真を編集用に準備できません</string>
     <string name="gallery_group_today">今日</string>

@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Photon Camera</string>
+    <string name="app_name">Rcam</string>
     
     <!-- Camera Controls -->
     <string name="switch_camera">Ganti Kamera</string>
@@ -157,7 +157,7 @@
     <string name="billing_feature_lifetime">Pembelian satu kali, gunakan seumur hidup</string>
     <string name="billing_premium_get_access">Dapatkan Akses Premium</string>
     <string name="billing_price_region_notice">Harga bervariasi menurut wilayah</string>
-    <string name="settings_premium_title">PhotonCamera Pro</string>
+    <string name="settings_premium_title">Rcam Pro</string>
     <string name="settings_premium_description">Buka semua LUT premium dan dukung kami.</string>
     
     <!-- Custom Import -->
@@ -269,7 +269,7 @@
     
     <!-- About & Donation -->
     <string name="settings_donation">Donasi</string>
-    <string name="settings_donation_description">Dukung pengembangan Photon Camera</string>
+    <string name="settings_donation_description">Dukung pengembangan Rcam</string>
     <string name="settings_default_focal_length">Panjang Fokus Default</string>
     <string name="settings_default_focal_length_description">Setel panjang fokus untuk beralih secara otomatis saat aplikasi dimulai.</string>
     <string name="refresh">Segarkan</string>

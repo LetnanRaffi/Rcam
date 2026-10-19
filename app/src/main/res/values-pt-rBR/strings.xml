@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Photon Camera</string>
+    <string name="app_name">Rcam</string>
     
     <!-- Camera Controls -->
     <string name="switch_camera">Alternar Câmera</string>
@@ -158,7 +158,7 @@
     <string name="billing_feature_lifetime">Compra única, uso vitalício</string>
     <string name="billing_premium_get_access">Obter Acesso Premium</string>
     <string name="billing_price_region_notice">O preço varia de acordo com a região</string>
-    <string name="settings_premium_title">PhotonCamera Pro</string>
+    <string name="settings_premium_title">Rcam Pro</string>
     <string name="settings_premium_description">Desbloqueie todos os LUTs premium e nos apoie.</string>
     
     <!-- Custom Import -->
@@ -270,7 +270,7 @@
     
     <!-- About & Donation -->
     <string name="settings_donation">Doação</string>
-    <string name="settings_donation_description">Apoie o desenvolvimento da Photon Camera</string>
+    <string name="settings_donation_description">Apoie o desenvolvimento da Rcam</string>
     <string name="settings_default_focal_length">Distância Focal Padrão</string>
     <string name="settings_default_focal_length_description">Defina a distância focal para alternar automaticamente quando o app for iniciado.</string>
     <string name="refresh">Atualizar</string>

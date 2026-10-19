@@ -1041,8 +1041,7 @@ fun SettingsScreen(
                     Text(
                         text = screenTitle,
                         color = Color.White,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Medium
+                        style = MaterialTheme.typography.titleLarge,
                     )
                 },
                 navigationIcon = {
@@ -1064,7 +1063,7 @@ fun SettingsScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent
+                    containerColor = Color(0xB30C0F14)
                 )
             )
 

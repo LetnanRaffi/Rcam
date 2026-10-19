@@ -1,6 +1,6 @@
 <resources>
     <string name="camera_video_fps_unavailable">Recording is unavailable because the camera did not provide valid frame rate ranges.</string>
-    <string name="app_name">Photon Camera</string>
+    <string name="app_name">Rcam</string>
 
     <!-- Camera Controls -->
     <string name="switch_camera">Switch Camera</string>
@@ -80,7 +80,7 @@
     <!-- Zoom -->
 
     <!-- Gallery -->
-    <string name="gallery_photon">Photon</string>
+    <string name="gallery_photon">Rcam</string>
     <string name="gallery_system">System</string>
     <string name="gallery_prepare_edit_failed">Unable to prepare this photo for editing</string>
     <string name="gallery_group_today">Today</string>
@@ -501,7 +501,7 @@
     <string name="billing_feature_lifetime">One-time purchase, lifetime use</string>
     <string name="billing_premium_get_access">Get Premium Access</string>
     <string name="billing_price_region_notice">Price varies by region</string>
-    <string name="settings_premium_title">PhotonCamera Pro</string>
+    <string name="settings_premium_title">Rcam Pro</string>
     <string name="settings_premium_description">Unlock all premium LUTs and support us.</string>
 
     <!-- Custom Import -->
@@ -863,7 +863,7 @@
     <string name="settings_community_group_telegram_description">Telegram: https://t.me/photoncameraapp</string>
     <string name="settings_community_group_qq_description">QQ Group: 569605452</string>
     <string name="settings_donation">Donation</string>
-    <string name="settings_donation_description">Support the development of Photon Camera</string>
+    <string name="settings_donation_description">Support the development of Rcam</string>
     <string name="settings_check_update">Check for Updates</string>
     <string name="settings_check_update_description">Current version: %1$s</string>
     <string name="settings_check_update_running">Checking and downloading updates...</string>

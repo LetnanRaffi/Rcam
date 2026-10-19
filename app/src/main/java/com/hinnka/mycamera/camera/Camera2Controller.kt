@@ -37,6 +37,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.suspendCancellableCoroutine
 import com.hinnka.mycamera.livephoto.LivePhotoRecorder
+import com.hinnka.mycamera.livephoto.MotionPhotoCapture
 import com.hinnka.mycamera.lut.LutConfig
 import com.hinnka.mycamera.lut.VideoColorEffectLayer
 import com.hinnka.mycamera.model.SafeImage
@@ -105,7 +106,9 @@ class Camera2Controller(private val context: Context) {
         private const val BURST_CAPTURE_BATCH_SIZE = 8
 
         // 拍照状态机常量
-        private const val PRECAPTURE_TIMEOUT_MS = 3_000L
+        private const val PRECAPTURE_SESSION_TIMEOUT_MS = 900L
+        private const val PRECAPTURE_AF_TIMEOUT_MS = 900L
+        private const val PRECAPTURE_AE_TIMEOUT_MS = 1_800L
         private const val PRECAPTURE_MAX_WAIT_FRAMES = 60L
         private const val MULTI_FRAME_TORCH_WARMUP_TIMEOUT_MS = 2_000L
         private const val EIS_PLUS_INPUT_WATCHDOG_MS = 2_000L
@@ -1067,7 +1070,7 @@ class Camera2Controller(private val context: Context) {
     var onPlayShutterSound: (() -> Unit)? = null
 
     // Live Photo 录制状态
-    var onLivePhotoVideoCaptured: ((java.io.File, Long) -> Unit)? = null
+    var onLivePhotoVideoCaptured: ((MotionPhotoCapture?) -> Unit)? = null
 
     // 相机错误回调（供上层处理错误恢复）
     // errorCode: CameraDevice 的错误代码或自定义错误码
@@ -1513,7 +1516,12 @@ class Camera2Controller(private val context: Context) {
                 }
             }
             precaptureTimeoutRunnable = timeout
-            handler.postDelayed(timeout, PRECAPTURE_TIMEOUT_MS)
+            val timeoutMs = when (phase) {
+                StillFlashPhase.APPLYING_SESSION -> PRECAPTURE_SESSION_TIMEOUT_MS
+                StillFlashPhase.WAITING_AF_CONVERGENCE -> PRECAPTURE_AF_TIMEOUT_MS
+                StillFlashPhase.WAITING_AE_AF -> PRECAPTURE_AE_TIMEOUT_MS
+            }
+            handler.postDelayed(timeout, timeoutMs)
             PLog.i(TAG, "Still flash phase submitted: generation=${pending.generation} phase=$phase " +
                 "afMode=${pending.afMode} triggerAf=${pending.triggerAf} " +
                 "aeMode=${repeating.get(CaptureRequest.CONTROL_AE_MODE)} " +
@@ -1854,7 +1862,13 @@ class Camera2Controller(private val context: Context) {
         } else {
             CaptureRequest.CONTROL_AF_MODE_OFF
         }
-        val triggerAf = state.isAutoFocus && supportsAfTrigger(afMode) &&
+        val current = pendingCaptureBaseExposureResult
+        val currentAfState = current?.get(CaptureResult.CONTROL_AF_STATE)
+        val focusAlreadyUsable = currentAfState == CaptureResult.CONTROL_AF_STATE_PASSIVE_FOCUSED ||
+            currentAfState == CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED
+        val lensStationary = current?.get(CaptureResult.LENS_STATE) != CaptureResult.LENS_STATE_MOVING
+        val triggerAf = state.isAutoFocus && !focusAlreadyUsable && lensStationary &&
+            supportsAfTrigger(afMode) &&
             isCaptureRequestKeyAvailable(CaptureRequest.CONTROL_AF_TRIGGER.name)
         val pending = StillFlashPrecapture(++precaptureGeneration, afMode, triggerAf)
         stillFlashPrecapture = pending
@@ -1866,13 +1880,15 @@ class Camera2Controller(private val context: Context) {
             null
         }
         isCaptureFocusFrozen = true
-        val current = pendingCaptureBaseExposureResult
         val previewAlreadyPrepared = current != null &&
             current.get(CaptureResult.CONTROL_AE_MODE) == resolveStillFlashAeMode() &&
             current.get(CaptureResult.CONTROL_AF_MODE) == afMode &&
             current.get(CaptureResult.FLASH_MODE) == CaptureResult.FLASH_MODE_OFF
         val continuousAf = afMode == CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE ||
             afMode == CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO
+        if (focusAlreadyUsable) {
+            PLog.d(TAG, "Reusing converged preview AF for flash capture: af=$currentAfState")
+        }
         // Flash mode is already applied to the normal repeating preview when selected. Reusing
         // that confirmed result removes an otherwise redundant session round trip while the
         // following trigger requests continue targeting the preview (and therefore Live Photo).
@@ -9039,11 +9055,15 @@ class Camera2Controller(private val context: Context) {
     fun recordLivePhotoVideo(
         timestampUs: Long? = null,
         captureStartTimestampUs: Long? = null,
-        onCaptured: ((java.io.File, Long) -> Unit)? = null,
+        onCaptured: ((MotionPhotoCapture?) -> Unit)? = null,
     ) {
-        livePhotoRecorder.recordVideo(timestampUs, captureStartTimestampUs) { file, timestamp ->
-            onCaptured?.invoke(file, timestamp)
-            onLivePhotoVideoCaptured?.invoke(file, timestamp)
+        livePhotoRecorder.recordVideo(
+            timestampUs,
+            captureStartTimestampUs,
+            frontFacing = isCurrentCameraFrontFacing(),
+        ) { capture ->
+            onCaptured?.invoke(capture)
+            onLivePhotoVideoCaptured?.invoke(capture)
         }
     }
 
