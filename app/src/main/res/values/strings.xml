@@ -6,6 +6,9 @@
     <string name="switch_camera">Switch Camera</string>
     <string name="settings">Settings</string>
     <string name="flash">Flash</string>
+    <string name="flash_off">Off</string>
+    <string name="flash_on">On</string>
+    <string name="flash_torch">Torch</string>
     <string name="timer">Timer</string>
     <string name="toolbox_title">Toolbox</string>
     <string name="toolbox_description">Utility tools and creative features</string>
@@ -26,6 +29,30 @@
     <string name="capture_mode_professional">Pro</string>
     <string name="capture_mode_photo">Photo</string>
     <string name="capture_mode_video">Video</string>
+    <string name="capture_mode_motion">Motion</string>
+    <string name="capture_mode_timestamp">Timestamp</string>
+    <string name="timestamp_settings">Timestamp</string>
+    <string name="timestamp_four_grid">4-Grid</string>
+    <string name="timestamp_show_date">Date</string>
+    <string name="timestamp_show_time">Time</string>
+    <string name="timestamp_show_location">Location</string>
+    <string name="timestamp_show_coordinates">Coordinates</string>
+    <string name="timestamp_background_plate">Readability background</string>
+    <string name="timestamp_custom_text">Custom text</string>
+    <string name="timestamp_placement">Placement</string>
+    <string name="timestamp_position_top_left">Top left</string>
+    <string name="timestamp_position_top_right">Top right</string>
+    <string name="timestamp_position_bottom_left">Bottom left</string>
+    <string name="timestamp_position_bottom_right">Bottom right</string>
+    <string name="timestamp_grid_progress">%1$d/%2$d photos</string>
+    <string name="timestamp_grid_complete">4-Grid complete</string>
+    <string name="timestamp_grid_retake_hint">Tap an individual photo to retake that slot.</string>
+    <string name="timestamp_retake_slot">Retake photo %1$d</string>
+    <string name="timestamp_grid_saved">4-Grid collage saved</string>
+    <string name="timestamp_grid_save_failed">Could not save the 4-Grid collage</string>
+    <string name="timestamp_grid_capture_failed">Photo capture did not finish. Please try again.</string>
+    <string name="apply">Apply</string>
+    <string name="saving">Saving…</string>
 
     <!-- Exposure Controls -->
     <string name="camera_parameter_exposure" translatable="false">EV</string>
@@ -1513,4 +1540,6 @@
     <!-- /Fotufilm controls -->
     <string name="settings_stabilize_motion_photo">Stabilize Motion Photo (experimental)</string>
     <string name="settings_stabilize_motion_photo_description">Reduces handheld shake in the moving clip without a gyroscope when Live Photo is enabled. Saving may take longer.</string>
+    <string name="gallery_timestamp_badge">Timestamp</string>
+    <string name="gallery_four_grid_badge">4-Grid</string>
 </resources>

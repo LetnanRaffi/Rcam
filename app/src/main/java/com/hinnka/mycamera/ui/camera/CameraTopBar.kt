@@ -30,6 +30,8 @@ import com.hinnka.mycamera.ui.components.PhysicalButton
 import com.hinnka.mycamera.ui.components.LiquidGlassBackdrop
 import com.hinnka.mycamera.ui.components.LiquidGlassStyle
 import com.hinnka.mycamera.ui.components.LiquidGlassSurface
+import com.hinnka.mycamera.ui.components.CameraGlassStyle
+import com.hinnka.mycamera.ui.components.GlassCapsule
 import com.hinnka.mycamera.video.CaptureMode
 import com.hinnka.mycamera.video.VideoAspectRatio
 import com.hinnka.mycamera.video.VideoCapabilities
@@ -78,48 +80,58 @@ fun CameraTopBar(
         return
     }
 
-    LiquidGlassSurface(
-        backdrop = glassBackdrop,
+    Box(
         modifier = modifier
             .fillMaxWidth()
             .padding(top = 18.dp, start = 12.dp, end = 12.dp)
-            .height(50.dp),
-        cornerRadius = 25.dp,
-        style = LiquidGlassStyle(
-            blurRadius = 10.dp,
-            refractionHeight = 5.dp,
-            refractionAmount = 3.dp,
-            saturation = 1.15f,
-            tint = Color.Black.copy(alpha = .3f),
-            fallbackColor = Color(0xE6181B20),
-        ),
+            .height(48.dp),
     ) {
+        GlassCapsule(
+            backdrop = glassBackdrop,
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .height(46.dp)
+                .width(82.dp)
+                .clickable(onClick = onFlashToggle),
+            cornerRadius = 23.dp,
+        ) {
+            Row(
+                Modifier.fillMaxSize().padding(horizontal = 11.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(
+                    imageVector = when (flashMode) {
+                        0 -> AppIcons.FlashOff
+                        1 -> AppIcons.FlashOn
+                        2 -> AppIcons.FlashlightOn
+                        else -> AppIcons.FlashOff
+                    },
+                    modifier = Modifier.size(18.dp).autoRotate(),
+                    contentDescription = stringResource(R.string.flash),
+                    tint = Color.White,
+                )
+                Text(
+                    text = stringResource(
+                        when (flashMode) {
+                            1 -> R.string.flash_on
+                            2 -> R.string.flash_torch
+                            else -> R.string.flash_off
+                        },
+                    ),
+                    color = Color.White,
+                    fontSize = 10.sp,
+                    maxLines = 1,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
     Row(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly,
+        modifier = Modifier.align(Alignment.CenterEnd),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        PhysicalButton(
-            modifier = Modifier.size(42.dp),
-            onClick = onFlashToggle
-        ) {
-            Icon(
-                imageVector = when (flashMode) {
-                    0 -> AppIcons.FlashOff
-                    1 -> AppIcons.FlashOn
-                    2 -> AppIcons.FlashlightOn
-                    else -> AppIcons.FlashOff
-                },
-                modifier = Modifier.size(20.dp).autoRotate(),
-                contentDescription = stringResource(R.string.flash),
-                tint = Color.White
-            )
-        }
-
-        PhysicalButton(
-            modifier = Modifier.size(42.dp),
-            onClick = onTimerToggle
-        ) {
+        TopGlassAction(glassBackdrop, onTimerToggle) {
             if (timerSeconds > 0) {
                 Text(
                     text = "${timerSeconds}s",
@@ -138,10 +150,7 @@ fun CameraTopBar(
             }
         }
 
-        PhysicalButton(
-            modifier = Modifier.size(42.dp),
-            onClick = onLivePhotoToggle
-        ) {
+        TopGlassAction(glassBackdrop, onLivePhotoToggle) {
             Icon(
                 painterResource(R.drawable.ic_live_photo),
                 contentDescription = stringResource(R.string.settings_use_live_photo),
@@ -150,10 +159,7 @@ fun CameraTopBar(
             )
         }
 
-        PhysicalButton(
-            modifier = Modifier.size(42.dp),
-            onClick = onHistogramToggle
-        ) {
+        TopGlassAction(glassBackdrop, onHistogramToggle) {
             Icon(
                 imageVector = AppIcons.BarChart,
                 contentDescription = stringResource(R.string.histogram),
@@ -162,10 +168,7 @@ fun CameraTopBar(
             )
         }
 
-        PhysicalButton(
-            modifier = Modifier.size(42.dp),
-            onClick = onSettingsClick
-        ) {
+        TopGlassAction(glassBackdrop, onSettingsClick) {
             Icon(
                 imageVector = Icons.Default.Settings,
                 contentDescription = stringResource(R.string.settings),
@@ -174,6 +177,25 @@ fun CameraTopBar(
             )
         }
     }
+    }
+}
+
+@Composable
+private fun TopGlassAction(
+    backdrop: LiquidGlassBackdrop,
+    onClick: () -> Unit,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    GlassCapsule(
+        backdrop = backdrop,
+        modifier = Modifier.size(46.dp).clickable(onClick = onClick),
+        cornerRadius = 23.dp,
+        style = CameraGlassStyle.copy(
+            blurRadius = 9.dp,
+            tint = Color.Black.copy(alpha = 0.18f),
+        ),
+    ) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center, content = content)
     }
 }
 

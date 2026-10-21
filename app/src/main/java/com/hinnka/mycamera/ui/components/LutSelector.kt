@@ -200,6 +200,7 @@ fun LutSelector(
     onManageClick: ((String) -> Unit)? = null,
     categoryOrder: List<String> = emptyList(),
     headerContent: (@Composable () -> Unit)? = null,
+    glassBackdrop: LiquidGlassBackdrop? = null,
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberLazyListState()
@@ -451,32 +452,73 @@ fun LutSelector(
 
             // 顶栏第 2 行：模式切换胶囊 [ 滤镜 | 边框 | 预设 ]
             if (supportsFrames || supportsPresets) {
-                Row(
+                val selectorModes = buildList {
+                    add(LutSelectorMode.Style to styleText)
+                    if (supportsFrames) add(LutSelectorMode.Frame to frameText)
+                    if (supportsPresets) add(LutSelectorMode.Presets to presetText)
+                }
+                BoxWithConstraints(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .height(36.dp)
+                        .padding(horizontal = 10.dp)
                 ) {
-                    LutSelectorModeTab(
-                        text = styleText,
-                        isSelected = actualMode == LutSelectorMode.Style,
-                        onClick = { onModeSelected(LutSelectorMode.Style) }
+                    val segmentWidth = maxWidth / selectorModes.size
+                    val selectedIndex = selectorModes.indexOfFirst { it.first == actualMode }
+                        .coerceAtLeast(0)
+                    val indicatorOffset by androidx.compose.animation.core.animateDpAsState(
+                        targetValue = segmentWidth * selectedIndex,
+                        animationSpec = androidx.compose.animation.core.spring(
+                            dampingRatio = 0.84f,
+                            stiffness = 500f,
+                        ),
+                        label = "lutModeIndicator",
                     )
-                    if (supportsFrames) {
-                        LutSelectorModeTab(
-                            text = frameText,
-                            isSelected = actualMode == LutSelectorMode.Frame,
-                            onClick = { onModeSelected(LutSelectorMode.Frame) }
+                    if (glassBackdrop != null) {
+                        LiquidGlassSurface(
+                            backdrop = glassBackdrop,
+                            modifier = Modifier
+                                .offset(x = indicatorOffset)
+                                .width(segmentWidth)
+                                .fillMaxHeight(),
+                            cornerRadius = 16.dp,
+                            style = CameraGlassStyle.copy(
+                                tint = Color.White.copy(alpha = 0.16f),
+                                highlightAlpha = 0.56f,
+                            ),
+                        ) {}
+                    } else {
+                        Box(
+                            Modifier
+                                .offset(x = indicatorOffset)
+                                .width(segmentWidth)
+                                .fillMaxHeight()
+                                .background(Color.White.copy(alpha = 0.12f), RoundedCornerShape(16.dp)),
                         )
                     }
-                    if (supportsPresets) {
-                        LutSelectorModeTab(
-                            text = presetText,
-                            isSelected = actualMode == LutSelectorMode.Presets,
-                            onClick = { onModeSelected(LutSelectorMode.Presets) },
-                            badgeText = if (activePresetModified) "*" else null
-                        )
+                    Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+                        selectorModes.forEach { (mode, text) ->
+                            val selected = actualMode == mode
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                    ) { onModeSelected(mode) },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    text = if (
+                                        mode == LutSelectorMode.Presets && activePresetModified
+                                    ) "$text*" else text,
+                                    color = if (selected) Color.White else Color.White.copy(alpha = 0.62f),
+                                    fontSize = 11.sp,
+                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                                )
+                            }
+                        }
                     }
                 }
             }

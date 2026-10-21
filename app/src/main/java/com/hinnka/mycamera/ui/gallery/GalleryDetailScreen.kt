@@ -104,10 +104,10 @@ import kotlin.math.roundToInt
 import com.hinnka.mycamera.ui.icons.AppIcons
 import kotlin.math.max
 
-private val GalleryToolbarSurface = Color(0xFF0E0E0E)
-private val GalleryToolbarButton = Color(0xFF242424)
+private val GalleryToolbarSurface = Color(0xA60E1115)
+private val GalleryToolbarButton = Color(0x992A2E34)
 private val GalleryToolbarContent = Color(0xFFF2F2F2)
-private val GallerySheetSurface = Color(0xFF171717)
+private val GallerySheetSurface = Color(0xD9171A1F)
 
 private class VideoPreviewHandle {
     private var activeLease: Lease? = null

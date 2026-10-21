@@ -79,6 +79,8 @@ import com.hinnka.mycamera.raw.fotufilm.FotufilmDocumentStorage
 import com.hinnka.mycamera.raw.RawToneMappingParameters
 import com.hinnka.mycamera.raw.RawWhiteLevelCorrection
 import com.hinnka.mycamera.preview.PortraitMaskSnapshot
+import com.hinnka.mycamera.timestamp.TimestampBurnIn
+import com.hinnka.mycamera.timestamp.timestampSettings
 import com.hinnka.mycamera.utils.BitmapUtils
 import com.hinnka.mycamera.utils.DngCaptureDiagnostics
 import com.hinnka.mycamera.utils.DngBlackLevelPatcher
@@ -1385,6 +1387,7 @@ object GalleryManager {
                 val exportInputBitmap = bitmap
 
                 if (
+                    metadata.timestampSettings() == null &&
                     !shouldPreferHeic &&
                     !shouldPreferJpeg444 &&
                     exportInputBitmap == null &&
@@ -1483,8 +1486,26 @@ object GalleryManager {
                         gainmapResult = gainmapResult
                     )
                 }
-                val outputBitmap = hdrOutput?.bitmap ?: processedBitmap
-                val outputGainmapResult = hdrOutput?.gainmapResult ?: gainmapResult
+                val preTimestampOutputBitmap = hdrOutput?.bitmap ?: processedBitmap
+                val outputBitmap = if (metadata.timestampSettings() != null) {
+                    TimestampBurnIn.apply(preTimestampOutputBitmap, metadata)
+                } else {
+                    preTimestampOutputBitmap
+                }
+                // A gainmap no longer describes the pixels after text is composited.
+                val outputGainmapResult = if (outputBitmap !== preTimestampOutputBitmap) {
+                    null
+                } else {
+                    hdrOutput?.gainmapResult ?: gainmapResult
+                }
+
+                fun releaseOutputBitmaps() {
+                    listOf(outputBitmap, preTimestampOutputBitmap, processedBitmap)
+                        .distinctBy { System.identityHashCode(it) }
+                        .forEach { candidate ->
+                            if (!candidate.isRecycled) candidate.recycle()
+                        }
+                }
 
                 val videoFile = File(getPhotoDir(context, id), VIDEO_FILE)
                 val isLivePhoto = videoFile.isFile && videoFile.length() > 0L
@@ -1516,7 +1537,7 @@ object GalleryManager {
                         destination = exportDestination
                     )
                     if (heicExported) {
-                        outputBitmap.recycle()
+                        releaseOutputBitmaps()
                         return@withContext true
                     }
                     PLog.w(TAG, "HEIC export unavailable or failed, falling back to JPEG for photo $id")
@@ -1544,12 +1565,7 @@ object GalleryManager {
                         "jpeg444=$shouldPreferJpeg444, success=$jpegEncoded"
                 )
                 if (!jpegEncoded) {
-                    if (outputBitmap !== processedBitmap && !outputBitmap.isRecycled) {
-                        outputBitmap.recycle()
-                    }
-                    if (!processedBitmap.isRecycled) {
-                        processedBitmap.recycle()
-                    }
+                    releaseOutputBitmaps()
                     return@withContext false
                 }
 
@@ -1683,16 +1699,11 @@ object GalleryManager {
                     }
                     PLog.d(TAG, "Exported URI saved: $uri for photo $id")
 
-                    if (outputBitmap !== processedBitmap && !outputBitmap.isRecycled) {
-                        outputBitmap.recycle()
-                    }
+                    releaseOutputBitmaps()
                     return@withContext true
                 }
 
-                if (outputBitmap !== processedBitmap && !outputBitmap.isRecycled) {
-                    outputBitmap.recycle()
-                }
-                processedBitmap.recycle()
+                releaseOutputBitmaps()
             } catch (e: Exception) {
                 PLog.e(TAG, "Failed to export photo", e)
             } finally {

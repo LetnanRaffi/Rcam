@@ -5,7 +5,37 @@
     <string name="switch_camera">Ganti Kamera</string>
     <string name="settings">Pengaturan</string>
     <string name="flash">Lampu Kilat</string>
+    <string name="flash_off">Mati</string>
+    <string name="flash_on">Nyala</string>
+    <string name="flash_torch">Senter</string>
     <string name="timer">Timer</string>
+    <string name="capture_mode_professional">Pro</string>
+    <string name="capture_mode_photo">Foto</string>
+    <string name="capture_mode_video">Video</string>
+    <string name="capture_mode_motion">Motion</string>
+    <string name="capture_mode_timestamp">Timestamp</string>
+    <string name="timestamp_settings">Pengaturan Timestamp</string>
+    <string name="timestamp_four_grid">4-Grid</string>
+    <string name="timestamp_show_date">Tanggal</string>
+    <string name="timestamp_show_time">Waktu</string>
+    <string name="timestamp_show_location">Lokasi</string>
+    <string name="timestamp_show_coordinates">Koordinat</string>
+    <string name="timestamp_background_plate">Latar agar mudah dibaca</string>
+    <string name="timestamp_custom_text">Teks khusus</string>
+    <string name="timestamp_placement">Posisi</string>
+    <string name="timestamp_position_top_left">Kiri atas</string>
+    <string name="timestamp_position_top_right">Kanan atas</string>
+    <string name="timestamp_position_bottom_left">Kiri bawah</string>
+    <string name="timestamp_position_bottom_right">Kanan bawah</string>
+    <string name="timestamp_grid_progress">%1$d/%2$d foto</string>
+    <string name="timestamp_grid_complete">4-Grid selesai</string>
+    <string name="timestamp_grid_retake_hint">Ketuk foto untuk mengambil ulang slot tersebut.</string>
+    <string name="timestamp_retake_slot">Ambil ulang foto %1$d</string>
+    <string name="timestamp_grid_saved">Kolase 4-Grid tersimpan</string>
+    <string name="timestamp_grid_save_failed">Kolase 4-Grid gagal disimpan</string>
+    <string name="timestamp_grid_capture_failed">Pengambilan foto belum selesai. Silakan coba lagi.</string>
+    <string name="apply">Terapkan</string>
+    <string name="saving">Menyimpan…</string>
     <string name="histogram">Histogram</string>
     <string name="back">Kembali</string>
     
@@ -485,4 +515,6 @@
     <!-- /Fotufilm controls -->
     <string name="settings_stabilize_motion_photo">Stabilkan Motion Photo (eksperimental)</string>
     <string name="settings_stabilize_motion_photo_description">Mengurangi guncangan tangan pada klip bergerak tanpa giroskop saat Live Photo aktif. Penyimpanan dapat memakan waktu lebih lama.</string>
+    <string name="gallery_timestamp_badge">Timestamp</string>
+    <string name="gallery_four_grid_badge">4-Grid</string>
 </resources>

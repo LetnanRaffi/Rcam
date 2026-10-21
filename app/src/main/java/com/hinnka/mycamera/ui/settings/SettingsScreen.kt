@@ -1063,7 +1063,7 @@ fun SettingsScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(0xB30C0F14)
+                    containerColor = Color(0x850C0F14)
                 )
             )
 
@@ -3397,8 +3397,25 @@ fun SettingsSection(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(Color.White.copy(alpha = 0.05f))
+                .clip(RoundedCornerShape(18.dp))
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            Color.White.copy(alpha = 0.095f),
+                            Color.White.copy(alpha = 0.035f),
+                        ),
+                    ),
+                )
+                .border(
+                    1.dp,
+                    Brush.verticalGradient(
+                        listOf(
+                            Color.White.copy(alpha = 0.24f),
+                            Color.White.copy(alpha = 0.055f),
+                        ),
+                    ),
+                    RoundedCornerShape(18.dp),
+                )
         ) {
             if (isExpandable) {
                 Row(

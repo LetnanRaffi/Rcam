@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -108,7 +109,9 @@ enum class ActivePanel {
 private enum class CameraShootingMode {
     PROFESSIONAL,
     PHOTO,
-    VIDEO
+    VIDEO,
+    MOTION,
+    TIMESTAMP,
 }
 
 private const val InitialPreviewTransitionDelayMillis = 150L
@@ -329,6 +332,42 @@ fun CameraScreen(
 
     // UI State
     var activePanel by remember { mutableStateOf(ActivePanel.NONE) }
+    var filterDrawerDragOffset by remember { mutableFloatStateOf(0f) }
+    var shootingMode by rememberSaveable {
+        mutableStateOf(
+            when {
+                state.captureMode == CaptureMode.VIDEO -> CameraShootingMode.VIDEO
+                state.useRaw && state.isRawSupported -> CameraShootingMode.PROFESSIONAL
+                else -> CameraShootingMode.PHOTO
+            },
+        )
+    }
+    var showTimestampSettings by rememberSaveable { mutableStateOf(false) }
+    var fourGridEnabled by rememberSaveable { mutableStateOf(false) }
+    val timestampGridPhotoIds = remember { mutableStateListOf<String?>(null, null, null, null) }
+    var timestampGridActiveIndex by remember { mutableIntStateOf(0) }
+    var timestampGridAwaitingSave by remember { mutableStateOf(false) }
+    var timestampGridPreview by remember { mutableStateOf<com.hinnka.mycamera.timestamp.TimestampGridPreview?>(null) }
+    var timestampGridSaving by remember { mutableStateOf(false) }
+    LaunchedEffect(shootingMode) {
+        viewModel.updateTimestampCaptureEnabled(shootingMode == CameraShootingMode.TIMESTAMP)
+        if (shootingMode == CameraShootingMode.MOTION && !state.useLivePhoto) {
+            viewModel.setUseLivePhoto(true)
+        }
+    }
+    LaunchedEffect(timestampGridAwaitingSave) {
+        if (timestampGridAwaitingSave) {
+            delay(30_000L)
+            if (timestampGridAwaitingSave) {
+                timestampGridAwaitingSave = false
+                android.widget.Toast.makeText(
+                    context,
+                    R.string.timestamp_grid_capture_failed,
+                    android.widget.Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+    }
     var selectedParameter by remember { mutableStateOf(CameraParameter.EXPOSURE_COMPENSATION) }
     var showParameterRuler by remember(state.captureMode, state.useRaw) { mutableStateOf(false) }
     val isXpan = state.aspectRatio == AspectRatio.XPAN
@@ -356,6 +395,7 @@ fun CameraScreen(
     // 当打开滤镜面板时，生成预览图
     LaunchedEffect(activePanel) {
         if (activePanel == ActivePanel.FILTERS) {
+            filterDrawerDragOffset = 0f
             viewModel.generateThumbnail()
         }
     }
@@ -406,6 +446,8 @@ fun CameraScreen(
             pendingCaptureAnimationBitmap?.recycleIfAlive()
             pendingCaptureAnimationBitmap = null
             captureAnimationJob?.cancel()
+            timestampGridPreview?.recycle()
+            timestampGridPreview = null
         }
     }
 
@@ -420,9 +462,27 @@ fun CameraScreen(
 
     // 监听照片保存完成事件，立即刷新缩略图
     LaunchedEffect(Unit) {
-        viewModel.imageSavedEvent.collect {
+        viewModel.imageSavedEvent.collect { photoId ->
             galleryViewModel.refreshLatestPhoto()
             MyCameraApplication.updateWidgets(context)
+            if (
+                photoId != null &&
+                shootingMode == CameraShootingMode.TIMESTAMP &&
+                fourGridEnabled &&
+                timestampGridAwaitingSave
+            ) {
+                timestampGridPhotoIds[timestampGridActiveIndex] = photoId
+                timestampGridAwaitingSave = false
+                val nextEmpty = timestampGridPhotoIds.indexOfFirst { it == null }
+                if (nextEmpty >= 0) {
+                    timestampGridActiveIndex = nextEmpty
+                } else {
+                    viewModel.buildTimestampGridPreview(timestampGridPhotoIds.filterNotNull()) { preview ->
+                        timestampGridPreview?.recycle()
+                        timestampGridPreview = preview
+                    }
+                }
+            }
         }
     }
 
@@ -624,17 +684,22 @@ fun CameraScreen(
 
         val targetCaptureMode = when (mode) {
             CameraShootingMode.PROFESSIONAL,
-            CameraShootingMode.PHOTO -> CaptureMode.PHOTO
+            CameraShootingMode.PHOTO,
+            CameraShootingMode.MOTION,
+            CameraShootingMode.TIMESTAMP -> CaptureMode.PHOTO
             CameraShootingMode.VIDEO -> CaptureMode.VIDEO
         }
         val targetUseRaw = when (mode) {
             CameraShootingMode.PROFESSIONAL -> true
-            CameraShootingMode.PHOTO -> false
+            CameraShootingMode.PHOTO,
+            CameraShootingMode.MOTION,
+            CameraShootingMode.TIMESTAMP -> false
             CameraShootingMode.VIDEO -> null
         }
         if (
             targetCaptureMode == state.captureMode &&
-            (targetUseRaw == null || targetUseRaw == state.useRaw)
+            (targetUseRaw == null || targetUseRaw == state.useRaw) &&
+            mode == shootingMode
         ) {
             return
         }
@@ -644,6 +709,13 @@ fun CameraScreen(
                 viewModel.setAspectRatio(AspectRatio.RATIO_4_3)
             }
             viewModel.setShootingMode(targetCaptureMode, targetUseRaw)
+            viewModel.setUseLivePhoto(mode == CameraShootingMode.MOTION)
+            viewModel.updateTimestampCaptureEnabled(mode == CameraShootingMode.TIMESTAMP)
+            shootingMode = mode
+            if (mode != CameraShootingMode.TIMESTAMP) {
+                showTimestampSettings = false
+                timestampGridAwaitingSave = false
+            }
         }
     }
 
@@ -1540,6 +1612,7 @@ fun CameraScreen(
                 latestPhoto = latestPhoto,
                 useMultipleExposure = useMultipleExposure,
                 multipleExposureState = multipleExposureState,
+                shootingMode = shootingMode,
                 onGalleryThumbnailBoundsChanged = { bounds ->
                     galleryThumbnailBounds = bounds
                 },
@@ -1550,6 +1623,15 @@ fun CameraScreen(
                 onCaptureModeSelected = ::setShootingModeWithPreviewTransition,
                 modeSwitchEnabled = !previewTransitionActive && !lensSwitchTransition.isActive,
                 onCaptureTap = {
+                    if (shootingMode == CameraShootingMode.TIMESTAMP && fourGridEnabled) {
+                        if (timestampGridAwaitingSave || timestampGridPreview != null) {
+                            return@Controls
+                        }
+                        val nextSlot = timestampGridPhotoIds.indexOfFirst { it == null }
+                        if (nextSlot < 0) return@Controls
+                        timestampGridActiveIndex = nextSlot
+                        timestampGridAwaitingSave = true
+                    }
                     val shouldDebounceRawCapture =
                         state.useRaw && state.captureMode == CaptureMode.PHOTO
                     if (shouldDebounceRawCapture) {
@@ -1664,7 +1746,129 @@ fun CameraScreen(
                     controls(Modifier.fillMaxWidth())
                 }
             )
+
+            if (shootingMode == CameraShootingMode.TIMESTAMP && activePanel == ActivePanel.NONE) {
+                val timestampOverlayAlignment = when (viewModel.timestampSettings.placement) {
+                    com.hinnka.mycamera.timestamp.TimestampPlacement.TOP_LEFT -> Alignment.TopStart
+                    com.hinnka.mycamera.timestamp.TimestampPlacement.TOP_RIGHT -> Alignment.TopEnd
+                    com.hinnka.mycamera.timestamp.TimestampPlacement.BOTTOM_LEFT -> Alignment.BottomStart
+                    com.hinnka.mycamera.timestamp.TimestampPlacement.BOTTOM_RIGHT -> Alignment.BottomEnd
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(cardHeight)
+                        .align(Alignment.TopCenter)
+                        .offset(y = viewfinderTop)
+                        .padding(14.dp),
+                ) {
+                    TimestampPreviewOverlay(
+                        settings = viewModel.timestampSettings,
+                        latitude = state.latitude,
+                        longitude = state.longitude,
+                        modifier = Modifier.align(timestampOverlayAlignment),
+                    )
+                    if (fourGridEnabled) {
+                        TimestampGridProgress(
+                            photoIds = timestampGridPhotoIds,
+                            activeIndex = timestampGridActiveIndex,
+                            isCapturing = timestampGridAwaitingSave,
+                            onSlotClick = { index ->
+                                if (!timestampGridAwaitingSave) {
+                                    if (timestampGridPhotoIds[index] != null) {
+                                        timestampGridPhotoIds[index] = null
+                                    }
+                                    timestampGridActiveIndex = index
+                                }
+                            },
+                            onCancel = {
+                                timestampGridAwaitingSave = false
+                                timestampGridPhotoIds.indices.forEach { timestampGridPhotoIds[it] = null }
+                                timestampGridActiveIndex = 0
+                                timestampGridPreview?.recycle()
+                                timestampGridPreview = null
+                            },
+                            backdrop = glassBackdrop,
+                            modifier = Modifier.align(Alignment.CenterEnd),
+                        )
+                    }
+                }
+                TimestampQuickControls(
+                    backdrop = glassBackdrop,
+                    fourGridEnabled = fourGridEnabled,
+                    onFourGridChanged = { enabled ->
+                        fourGridEnabled = enabled
+                        if (!enabled) {
+                            timestampGridAwaitingSave = false
+                            timestampGridPhotoIds.indices.forEach { timestampGridPhotoIds[it] = null }
+                            timestampGridActiveIndex = 0
+                            timestampGridPreview?.recycle()
+                            timestampGridPreview = null
+                        }
+                    },
+                    onSettingsClick = { showTimestampSettings = true },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 158.dp),
+                )
+            }
         }
+
+        TimestampConfigurationSheet(
+            visible = showTimestampSettings && shootingMode == CameraShootingMode.TIMESTAMP,
+            settings = viewModel.timestampSettings,
+            hasLocation = state.latitude != null && state.longitude != null,
+            backdrop = glassBackdrop,
+            onSettingsChanged = viewModel::updateTimestampSettings,
+            onDismiss = { showTimestampSettings = false },
+            modifier = Modifier.fillMaxSize(),
+        )
+
+        TimestampGridResultSheet(
+            preview = timestampGridPreview,
+            isSaving = timestampGridSaving,
+            backdrop = glassBackdrop,
+            onSave = {
+                timestampGridPreview?.let { result ->
+                    timestampGridSaving = true
+                    viewModel.saveTimestampGridCollage(result.collage) { photoId ->
+                        timestampGridSaving = false
+                        if (photoId != null) {
+                            android.widget.Toast.makeText(
+                                context,
+                                R.string.timestamp_grid_saved,
+                                android.widget.Toast.LENGTH_SHORT,
+                            ).show()
+                            timestampGridPreview?.recycle()
+                            timestampGridPreview = null
+                            timestampGridPhotoIds.indices.forEach { timestampGridPhotoIds[it] = null }
+                            timestampGridActiveIndex = 0
+                            onGalleryClick()
+                        } else {
+                            android.widget.Toast.makeText(
+                                context,
+                                R.string.timestamp_grid_save_failed,
+                                android.widget.Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                    }
+                }
+            },
+            onRetakeSlot = { index ->
+                timestampGridPreview?.recycle()
+                timestampGridPreview = null
+                timestampGridPhotoIds[index] = null
+                timestampGridActiveIndex = index
+            },
+            onCancel = {
+                timestampGridPreview?.recycle()
+                timestampGridPreview = null
+                timestampGridPhotoIds.indices.forEach { timestampGridPhotoIds[it] = null }
+                timestampGridActiveIndex = 0
+            },
+            onGallery = onGalleryClick,
+            modifier = Modifier.fillMaxSize(),
+        )
         val panelDismissBounds = if (isXpan) {
             viewfinderAreaBounds ?: previewBounds
         } else {
@@ -1806,7 +2010,32 @@ fun CameraScreen(
                 val defaultPresetName = stringResource(R.string.preset_new_preset_default)
                 val isVideoLog = isVideoMode && state.videoConfig.logProfile.isEnabled
 
-                // LUT 选择器 (内嵌 Presets 列表与统一控制，无多余背景遮挡)
+                LiquidGlassSurface(
+                    backdrop = glassBackdrop,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 8.dp, end = 8.dp, bottom = 4.dp)
+                        .graphicsLayer { translationY = filterDrawerDragOffset }
+                        .pointerInput(activePanel) {
+                            detectVerticalDragGestures(
+                                onVerticalDrag = { change, dragAmount ->
+                                    change.consume()
+                                    filterDrawerDragOffset =
+                                        (filterDrawerDragOffset + dragAmount).coerceAtLeast(0f)
+                                },
+                                onDragEnd = {
+                                    if (filterDrawerDragOffset > 90.dp.toPx()) {
+                                        activePanel = ActivePanel.NONE
+                                    }
+                                    filterDrawerDragOffset = 0f
+                                },
+                                onDragCancel = { filterDrawerDragOffset = 0f },
+                            )
+                        },
+                    cornerRadius = 28.dp,
+                    style = StrongGlassStyle,
+                ) {
+                // LUT, Bingkai, and Presets stay wired to their existing repositories.
                 LutSelector(
                     availableLuts = viewModel.selectableLutList,
                     currentLutId = currentLutId,
@@ -1866,10 +2095,12 @@ fun CameraScreen(
                             )
                         }
                     } else null,
+                    glassBackdrop = glassBackdrop,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(start = 6.dp, top = 10.dp, end = 6.dp)
+                        .padding(start = 6.dp, top = 10.dp, end = 6.dp, bottom = 10.dp)
                 )
+                }
             }
         }
 
@@ -2001,6 +2232,7 @@ private fun Controls(
     latestPhoto: com.hinnka.mycamera.gallery.MediaData?,
     useMultipleExposure: Boolean,
     multipleExposureState: com.hinnka.mycamera.viewmodel.MultipleExposureSessionState,
+    shootingMode: CameraShootingMode,
     onGalleryThumbnailBoundsChanged: (Rect) -> Unit,
     onCaptureButtonBoundsChanged: (Rect) -> Unit,
     onSwitchCameraClick: () -> Unit,
@@ -2066,6 +2298,7 @@ private fun Controls(
                 CaptureButton(
                     captureMode = state.captureMode,
                     isProfessionalMode = state.useRaw && state.isRawSupported,
+                    isMotionMode = shootingMode == CameraShootingMode.MOTION,
                     isCapturing = state.isCapturing,
                     photoCaptureProgress = state.photoCaptureProgress,
                     isBurstCapturing = state.burstCapturing,
@@ -2073,6 +2306,8 @@ private fun Controls(
                     isVideoProcessing = state.videoRecordingState.isProcessing,
                     isPaused = state.videoRecordingState.isPaused,
                     allowLongPress = state.captureMode == CaptureMode.PHOTO &&
+                        (shootingMode == CameraShootingMode.PROFESSIONAL ||
+                            shootingMode == CameraShootingMode.PHOTO) &&
                         !useMultipleExposure,
                     multipleExposureEnabled = useMultipleExposure && state.captureMode == CaptureMode.PHOTO,
                     multipleExposureProgress = multipleExposureState.capturedCount.toFloat() /
@@ -2155,11 +2390,7 @@ private fun Controls(
             Spacer(modifier = Modifier.height(CameraControlsLayoutDefaults.ModeSwitcherSpacing))
 
             CaptureModeSwitcher(
-                shootingMode = when {
-                    state.captureMode == CaptureMode.VIDEO -> CameraShootingMode.VIDEO
-                    state.useRaw && state.isRawSupported -> CameraShootingMode.PROFESSIONAL
-                    else -> CameraShootingMode.PHOTO
-                },
+                shootingMode = shootingMode,
                 professionalModeEnabled = state.isRawSupported,
                 enabled = modeSwitchEnabled &&
                     !state.videoRecordingState.isRecording &&
@@ -2259,6 +2490,7 @@ private fun GalleryProcessingOverlay(
 fun CaptureButton(
     captureMode: CaptureMode,
     isProfessionalMode: Boolean,
+    isMotionMode: Boolean,
     isCapturing: Boolean,
     photoCaptureProgress: PhotoCaptureProgress?,
     isBurstCapturing: Boolean,
@@ -2368,6 +2600,7 @@ fun CaptureButton(
                 if (isPaused) Color.White.copy(alpha = 0.8f)
                 else Color.Red.copy(alpha = pulseAlpha)
             }
+            isMotionMode -> Color(0xFFFFB52E).copy(alpha = 0.9f)
             else -> Color.White.copy(alpha = 0.32f)
         }
 
@@ -2496,54 +2729,68 @@ private fun CaptureModeSwitcher(
     LiquidGlassSurface(
         backdrop = glassBackdrop,
         modifier = Modifier
-            .width(228.dp)
+            .fillMaxWidth()
+            .widthIn(max = 380.dp)
+            .padding(horizontal = 12.dp)
             .height(CameraControlsLayoutDefaults.ModeSwitcherHeight),
-        cornerRadius = 18.dp,
-        style = LiquidGlassStyle(
-            blurRadius = 10.dp,
-            refractionHeight = 5.dp,
-            refractionAmount = 3.dp,
-            saturation = 1.15f,
-            tint = Color.Black.copy(alpha = .32f),
-            fallbackColor = Color(0xE6181B20),
-        ),
+        cornerRadius = 22.dp,
+        style = CameraGlassStyle,
     ) {
         BoxWithConstraints(Modifier.fillMaxSize().padding(3.dp)) {
-        val knobWidth = maxWidth / 3
+        val segmentWidth = maxWidth / 5
         val selectedIndex = when (shootingMode) {
             CameraShootingMode.PROFESSIONAL -> 0
             CameraShootingMode.PHOTO -> 1
             CameraShootingMode.VIDEO -> 2
+            CameraShootingMode.MOTION -> 3
+            CameraShootingMode.TIMESTAMP -> 4
         }
+        val targetKnobWidth = segmentWidth * when (shootingMode) {
+            CameraShootingMode.PROFESSIONAL -> 0.78f
+            CameraShootingMode.PHOTO -> 0.9f
+            CameraShootingMode.VIDEO -> 0.9f
+            CameraShootingMode.MOTION -> 1f
+            CameraShootingMode.TIMESTAMP -> 1.18f
+        }
+        val knobWidth by animateDpAsState(
+            targetValue = targetKnobWidth.coerceAtMost(maxWidth),
+            animationSpec = spring(dampingRatio = 0.82f, stiffness = 520f),
+            label = "modeSwitcherWidth",
+        )
         val knobOffset by animateDpAsState(
-            targetValue = knobWidth * selectedIndex,
-            animationSpec = tween(durationMillis = 220),
+            targetValue = (segmentWidth * (selectedIndex + 0.5f) - knobWidth / 2)
+                .coerceIn(0.dp, maxWidth - knobWidth),
+            animationSpec = spring(dampingRatio = 0.82f, stiffness = 480f),
             label = "modeSwitcher"
         )
-        val selectedBackground by animateColorAsState(
-            targetValue = if (shootingMode == CameraShootingMode.PROFESSIONAL) {
-                AccentColor
-            } else {
-                Color.White
-            },
-            animationSpec = tween(durationMillis = 220),
-            label = "modeSwitcherColor"
-        )
-        Box(
+        LiquidGlassSurface(
+            backdrop = glassBackdrop,
             modifier = Modifier
                 .offset(x = knobOffset)
                 .width(knobWidth)
-                .fillMaxHeight()
-                .clip(RoundedCornerShape(15.dp))
-                .background(selectedBackground)
-        )
+                .fillMaxHeight(),
+            cornerRadius = 18.dp,
+            style = CameraGlassStyle.copy(
+                blurRadius = 18.dp,
+                tint = when (shootingMode) {
+                    CameraShootingMode.PROFESSIONAL -> AccentColor.copy(alpha = 0.48f)
+                    CameraShootingMode.MOTION -> Color(0xFFFFB52E).copy(alpha = 0.34f)
+                    else -> Color.White.copy(alpha = 0.22f)
+                },
+                highlightAlpha = 0.72f,
+                fallbackColor = when (shootingMode) {
+                    CameraShootingMode.MOTION -> Color(0xCC6B4708)
+                    else -> Color(0xD94B4E55)
+                },
+            ),
+        ) {}
         Row(
             modifier = Modifier.fillMaxSize(),
             verticalAlignment = Alignment.CenterVertically
         ) {
             ModeSwitcherItem(
                 label = stringResource(R.string.capture_mode_professional),
-                selectedContentColor = accentContentColor(selectedBackground),
+                selectedContentColor = Color.White,
                 selected = shootingMode == CameraShootingMode.PROFESSIONAL,
                 enabled = enabled && professionalModeEnabled,
                 onClick = { onModeSelected(CameraShootingMode.PROFESSIONAL) },
@@ -2563,6 +2810,20 @@ private fun CaptureModeSwitcher(
                 onClick = { onModeSelected(CameraShootingMode.VIDEO) },
                 modifier = Modifier.weight(1f)
             )
+            ModeSwitcherItem(
+                label = stringResource(R.string.capture_mode_motion),
+                selected = shootingMode == CameraShootingMode.MOTION,
+                enabled = enabled,
+                onClick = { onModeSelected(CameraShootingMode.MOTION) },
+                modifier = Modifier.weight(1f)
+            )
+            ModeSwitcherItem(
+                label = stringResource(R.string.capture_mode_timestamp),
+                selected = shootingMode == CameraShootingMode.TIMESTAMP,
+                enabled = enabled,
+                onClick = { onModeSelected(CameraShootingMode.TIMESTAMP) },
+                modifier = Modifier.weight(1f)
+            )
         }
         }
     }
@@ -2575,7 +2836,7 @@ private fun ModeSwitcherItem(
     enabled: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    selectedContentColor: Color = Color.Black
+    selectedContentColor: Color = Color.White
 ) {
     Box(
         modifier = modifier
@@ -2591,8 +2852,8 @@ private fun ModeSwitcherItem(
                 enabled -> Color.White.copy(alpha = 0.82f)
                 else -> Color.White.copy(alpha = 0.3f)
             },
-            fontSize = 12.sp,
-            lineHeight = 14.sp,
+            fontSize = 10.sp,
+            lineHeight = 12.sp,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
             maxLines = 1
         )

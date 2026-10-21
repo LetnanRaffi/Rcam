@@ -103,6 +103,11 @@ import com.hinnka.mycamera.raw.fotufilm.FotufilmDocument
 import com.hinnka.mycamera.raw.fotufilm.FotufilmDocumentStorage
 import com.hinnka.mycamera.screencapture.PhantomPipCrop
 import com.hinnka.mycamera.stabilization.ExternalLensStabilizationConfig
+import com.hinnka.mycamera.timestamp.TimestampBurnIn
+import com.hinnka.mycamera.timestamp.TimestampGridComposer
+import com.hinnka.mycamera.timestamp.TimestampGridPreview
+import com.hinnka.mycamera.timestamp.TimestampSettings
+import com.hinnka.mycamera.timestamp.toMetadataProperties
 import com.hinnka.mycamera.ui.camera.CameraGLSurfaceView
 import com.hinnka.mycamera.ui.camera.ZoomDisplayMode
 import com.hinnka.mycamera.utils.*
@@ -151,6 +156,7 @@ private data class CaptureSettingsSnapshot(
     val blackBorderCrop: RawBlackBorderCrop,
     val portraitMask: PortraitMaskSnapshot?,
     val multipleExposure: Boolean,
+    val timestampSettings: TimestampSettings?,
     val photoId: String = UUID.randomUUID().toString(),
     val galleryRegistration: CompletableDeferred<Unit> = CompletableDeferred(),
     // Exposure matching needs the unfiltered source; UI placeholders need the displayed look.
@@ -634,6 +640,19 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     // Shutter completion is independent of image delivery and the render/save queue.
     private val _captureCompletedEvent = MutableSharedFlow<MediaMetadata>()
     val captureCompletedEvent = _captureCompletedEvent.asSharedFlow()
+
+    var timestampSettings by mutableStateOf(TimestampSettings())
+        private set
+    var timestampCaptureEnabled by mutableStateOf(false)
+        private set
+
+    fun updateTimestampSettings(settings: TimestampSettings) {
+        timestampSettings = settings
+    }
+
+    fun updateTimestampCaptureEnabled(enabled: Boolean) {
+        timestampCaptureEnabled = enabled
+    }
 
     private val _isInitialized = MutableStateFlow(false)
     val isInitialized = _isInitialized.asStateFlow()
@@ -3207,7 +3226,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             rawAutoExposure = effectiveRawAutoExposure,
             customProperties = rawProcessingMetadataProperties(
                 userPrefs, cameraController.getCurrentSensorPhysicalAreaMm2(),
-            ),
+            ) + settings.timestampSettings?.toMetadataProperties().orEmpty(),
             rawHighlightsAdjustment = userPrefs?.rawHighlightsAdjustment ?: 0f,
             rawShadowsAdjustment = userPrefs?.rawShadowsAdjustment ?: 0f,
             rawBlackPointCorrection = userPrefs?.rawBlackPointCorrection ?: 0f,
@@ -3253,7 +3272,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             focusPointX = settings.state.focusPoint?.first,
             focusPointY = settings.state.focusPoint?.second,
             manualHdrEffectEnabled = defaultHdrEffectEnabled,
-            captureMode = captureMode,
+            captureMode = captureMode ?: settings.timestampSettings?.let { "timestamp" },
             multipleExposureFrameCount = multipleExposureFrameCount
         )
     }
@@ -3583,6 +3602,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         blackBorderCrop = currentRawBlackBorderCrop(),
         portraitMask = capturePortraitMaskSnapshot(),
         multipleExposure = multipleExposureState.enabled,
+        timestampSettings = timestampSettings.takeIf { timestampCaptureEnabled },
     )
 
     private fun submitPhotoCapture() {
@@ -6068,7 +6088,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                         userPrefs, cameraController.getCurrentSensorPhysicalAreaMm2(),
                     ),
                     captureExposureCompensationEv,
-                ),
+                ) + settings.timestampSettings?.toMetadataProperties().orEmpty(),
                 rawHighlightsAdjustment = userPrefs?.rawHighlightsAdjustment ?: 0f,
                 rawShadowsAdjustment = userPrefs?.rawShadowsAdjustment ?: 0f,
                 rawBlackPointCorrection = userPrefs?.rawBlackPointCorrection ?: 0f,
@@ -6114,6 +6134,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 focusPointX = settings.state.focusPoint?.first,
                 focusPointY = settings.state.focusPoint?.second,
                 manualHdrEffectEnabled = defaultHdrEffectEnabled,
+                captureMode = settings.timestampSettings?.let { "timestamp" },
             )
 
             val livePhotoVideoDeferred = settings.livePhotoVideo
@@ -6197,7 +6218,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         bitmap: Bitmap,
         metadataCaptureMode: String,
         ratio: AspectRatio?
-    ) {
+    ): String? {
         try {
             val context = getApplication<Application>()
             val currentState = state.value
@@ -6301,7 +6322,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             )
             if (photoId == null) {
                 PLog.e(TAG, "Failed to prepare preview bitmap capture: $metadataCaptureMode")
-                return
+                return null
             }
 
             withContext(Dispatchers.IO) {
@@ -6319,8 +6340,81 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             }
             PLog.d(TAG, "Preview bitmap capture saved: $photoId, mode=$metadataCaptureMode")
             _imageSavedEvent.emit(photoId)
+            return photoId
         } catch (e: Exception) {
             PLog.e(TAG, "Failed to save preview bitmap capture: $metadataCaptureMode", e)
+            return null
+        }
+    }
+
+    fun buildTimestampGridPreview(
+        photoIds: List<String>,
+        onComplete: (TimestampGridPreview?) -> Unit,
+    ) {
+        if (photoIds.size != 4) {
+            onComplete(null)
+            return
+        }
+        viewModelScope.launch {
+            val context = getApplication<Application>()
+            val preview = withContext(Dispatchers.Default) {
+                val stampedImages = mutableListOf<Bitmap>()
+                try {
+                    for (photoId in photoIds) {
+                        val bitmap = GalleryManager.loadBitmap(context, photoId, maxEdge = 1800)
+                            ?: return@withContext null
+                        val metadata = GalleryManager.loadMetadata(context, photoId)
+                            ?: run {
+                                bitmap.recycle()
+                                return@withContext null
+                            }
+                        val stamped = TimestampBurnIn.apply(bitmap, metadata)
+                        if (stamped !== bitmap) bitmap.recycle()
+                        stampedImages += stamped
+                    }
+                    val collage = TimestampGridComposer.compose(stampedImages) ?: return@withContext null
+                    val thumbnails = stampedImages.map { image ->
+                        val targetWidth = 360
+                        val targetHeight = (image.height * (targetWidth.toFloat() / image.width))
+                            .roundToInt()
+                            .coerceAtLeast(1)
+                        Bitmap.createScaledBitmap(image, targetWidth, targetHeight, true).let { scaled ->
+                            if (scaled === image) {
+                                image.copy(Bitmap.Config.ARGB_8888, false)
+                            } else {
+                                scaled
+                            }
+                        }
+                    }
+                    TimestampGridPreview(collage, thumbnails)
+                } finally {
+                    stampedImages.forEach { if (!it.isRecycled) it.recycle() }
+                }
+            }
+            onComplete(preview)
+        }
+    }
+
+    fun saveTimestampGridCollage(
+        collage: Bitmap,
+        onComplete: (String?) -> Unit,
+    ) {
+        val ownedCopy = collage.copy(Bitmap.Config.ARGB_8888, false)
+        if (ownedCopy == null) {
+            onComplete(null)
+            return
+        }
+        viewModelScope.launch {
+            val photoId = try {
+                savePreviewBitmapCapture(
+                    bitmap = ownedCopy,
+                    metadataCaptureMode = "timestamp_grid",
+                    ratio = AspectRatio.RATIO_1_1,
+                )
+            } finally {
+                if (!ownedCopy.isRecycled) ownedCopy.recycle()
+            }
+            onComplete(photoId)
         }
     }
 

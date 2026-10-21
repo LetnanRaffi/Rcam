@@ -302,7 +302,7 @@ fun GalleryScreen(
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = Color(0xEB0C0F14)
+                        containerColor = Color(0xA60C0F14)
                     )
                 )
                 if (!isSelectionMode) {
@@ -325,7 +325,7 @@ fun GalleryScreen(
                 exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
             ) {
                 Surface(
-                    color = Color(0xF212161C),
+                    color = Color(0xD912161C),
                     modifier = Modifier
                         .fillMaxWidth()
                         .navigationBarsPadding()
@@ -526,8 +526,12 @@ fun GalleryScreen(
                 }
             }
         },
-        containerColor = MaterialTheme.colorScheme.background,
-        modifier = modifier
+        containerColor = Color(0xFF080A0D),
+        modifier = modifier.background(
+            androidx.compose.ui.graphics.Brush.verticalGradient(
+                listOf(Color(0xFF111821), Color(0xFF050709)),
+            ),
+        )
     ) { paddingValues ->
         PullToRefreshBox(
             isRefreshing = isLoading,
@@ -715,7 +719,7 @@ private fun GalleryTabRow(
     val selectedTabIndex = selectedTab.ordinal
     TabRow(
         selectedTabIndex = selectedTabIndex,
-        containerColor = Color(0xFF151515),
+        containerColor = Color(0x9911161C),
         contentColor = Color.White,
         indicator = { tabPositions ->
             TabRowDefaults.SecondaryIndicator(
@@ -1386,6 +1390,7 @@ private class GalleryPhotoItemView(context: Context) : FrameLayout(context) {
     private val burstIcon: ImageView
     private val rawBadge: TextView
     private val importedBadge: TextView
+    private val captureModeBadge: TextView
     private val relatedBadge: View
     private var aspectRatio: Float = 1f
     private var boundPhotoId: String? = null
@@ -1409,6 +1414,7 @@ private class GalleryPhotoItemView(context: Context) : FrameLayout(context) {
         burstIcon = findViewById(R.id.gallery_photo_burst_icon)
         rawBadge = findViewById(R.id.gallery_photo_raw_badge)
         importedBadge = findViewById(R.id.gallery_photo_imported_badge)
+        captureModeBadge = findViewById(R.id.gallery_photo_capture_mode_badge)
         relatedBadge = findViewById(R.id.gallery_photo_related_badge)
         contentLayer.addView(processingShimmer, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
@@ -1452,6 +1458,13 @@ private class GalleryPhotoItemView(context: Context) : FrameLayout(context) {
         importedBadge.visibility =
             if (viewModel.selectedTab == GalleryTab.PHOTON && photo.sourceUri != null) VISIBLE else GONE
         importedBadge.text = context.getString(R.string.imported)
+        val captureModeLabel = when (photo.metadata?.captureMode) {
+            "timestamp" -> context.getString(R.string.gallery_timestamp_badge)
+            "timestamp_grid" -> context.getString(R.string.gallery_four_grid_badge)
+            else -> null
+        }
+        captureModeBadge.visibility = if (captureModeLabel != null) VISIBLE else GONE
+        captureModeBadge.text = captureModeLabel.orEmpty()
         relatedBadge.visibility =
             if (viewModel.selectedTab == GalleryTab.SYSTEM && photo.relatedPhoto != null) VISIBLE else GONE
 
