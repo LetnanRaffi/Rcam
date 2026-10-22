@@ -106,7 +106,12 @@ import com.hinnka.mycamera.stabilization.ExternalLensStabilizationConfig
 import com.hinnka.mycamera.timestamp.TimestampBurnIn
 import com.hinnka.mycamera.timestamp.TimestampGridComposer
 import com.hinnka.mycamera.timestamp.TimestampGridPreview
+import com.hinnka.mycamera.timestamp.TimestampCaptureContext
+import com.hinnka.mycamera.timestamp.TimestampHeadingManager
+import com.hinnka.mycamera.timestamp.TimestampLocationPhase
+import com.hinnka.mycamera.timestamp.TimestampLocationState
 import com.hinnka.mycamera.timestamp.TimestampSettings
+import com.hinnka.mycamera.timestamp.TimestampSettingsStore
 import com.hinnka.mycamera.timestamp.toMetadataProperties
 import com.hinnka.mycamera.ui.camera.CameraGLSurfaceView
 import com.hinnka.mycamera.ui.camera.ZoomDisplayMode
@@ -157,6 +162,7 @@ private data class CaptureSettingsSnapshot(
     val portraitMask: PortraitMaskSnapshot?,
     val multipleExposure: Boolean,
     val timestampSettings: TimestampSettings?,
+    val timestampContext: TimestampCaptureContext?,
     val photoId: String = UUID.randomUUID().toString(),
     val galleryRegistration: CompletableDeferred<Unit> = CompletableDeferred(),
     // Exposure matching needs the unfiltered source; UI placeholders need the displayed look.
@@ -626,6 +632,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private val videoAudioInputManager = VideoAudioInputManager(application)
 
     private val locationManager = LocationManager(application)
+    private val timestampHeadingManager = TimestampHeadingManager(application)
+    private val _timestampLocationState = MutableStateFlow(TimestampLocationState())
+    val timestampLocationState: StateFlow<TimestampLocationState> = _timestampLocationState.asStateFlow()
+    val timestampHeading: StateFlow<Float?> = timestampHeadingManager.heading
+    private var timestampLocationJob: Job? = null
 
     val state: StateFlow<CameraState> = cameraController.state
     val livePhotoRecorder get() = cameraController.livePhotoRecorder
@@ -641,17 +652,52 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private val _captureCompletedEvent = MutableSharedFlow<MediaMetadata>()
     val captureCompletedEvent = _captureCompletedEvent.asSharedFlow()
 
-    var timestampSettings by mutableStateOf(TimestampSettings())
+    var timestampSettings by mutableStateOf(TimestampSettingsStore.load(application))
         private set
     var timestampCaptureEnabled by mutableStateOf(false)
         private set
 
     fun updateTimestampSettings(settings: TimestampSettings) {
         timestampSettings = settings
+        TimestampSettingsStore.save(getApplication(), settings)
+        if (timestampCaptureEnabled && (settings.showLocation || settings.showCoordinates || settings.showAccuracy)) {
+            refreshTimestampLocation()
+        }
     }
 
     fun updateTimestampCaptureEnabled(enabled: Boolean) {
         timestampCaptureEnabled = enabled
+        if (enabled) {
+            timestampHeadingManager.start()
+            if (timestampSettings.showLocation || timestampSettings.showCoordinates || timestampSettings.showAccuracy) {
+                refreshTimestampLocation()
+            }
+        } else {
+            timestampHeadingManager.stop()
+            timestampLocationJob?.cancel()
+            _timestampLocationState.value = TimestampLocationState()
+        }
+    }
+
+    fun refreshTimestampLocation() {
+        if (!timestampCaptureEnabled) return
+        if (!locationManager.hasLocationPermission()) {
+            _timestampLocationState.value = TimestampLocationState(TimestampLocationPhase.PERMISSION_REQUIRED)
+            return
+        }
+        timestampLocationJob?.cancel()
+        timestampLocationJob = viewModelScope.launch {
+            _timestampLocationState.value = TimestampLocationState(
+                phase = TimestampLocationPhase.LOCATING,
+                fix = _timestampLocationState.value.fix,
+            )
+            val fix = locationManager.getTimestampLocation()
+            _timestampLocationState.value = if (fix != null) {
+                TimestampLocationState(TimestampLocationPhase.READY, fix)
+            } else {
+                TimestampLocationState(TimestampLocationPhase.UNAVAILABLE)
+            }
+        }
     }
 
     private val _isInitialized = MutableStateFlow(false)
@@ -3226,7 +3272,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             rawAutoExposure = effectiveRawAutoExposure,
             customProperties = rawProcessingMetadataProperties(
                 userPrefs, cameraController.getCurrentSensorPhysicalAreaMm2(),
-            ) + settings.timestampSettings?.toMetadataProperties().orEmpty(),
+            ) + settings.timestampSettings?.toMetadataProperties().orEmpty() +
+                settings.timestampContext.toMetadataProperties(),
             rawHighlightsAdjustment = userPrefs?.rawHighlightsAdjustment ?: 0f,
             rawShadowsAdjustment = userPrefs?.rawShadowsAdjustment ?: 0f,
             rawBlackPointCorrection = userPrefs?.rawBlackPointCorrection ?: 0f,
@@ -3256,9 +3303,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             deviceModel = DeviceUtil.model,
             brand = captureInfo.make,
             dateTaken = captureInfo.captureTime,
-            latitude = captureInfo.latitude,
-            longitude = captureInfo.longitude,
-            altitude = captureInfo.altitude,
+            location = settings.timestampContext?.location?.displayAddress,
+            latitude = settings.timestampContext?.location?.latitude ?: captureInfo.latitude,
+            longitude = settings.timestampContext?.location?.longitude ?: captureInfo.longitude,
+            altitude = settings.timestampContext?.location?.altitude ?: captureInfo.altitude,
             iso = captureInfo.iso,
             shutterSpeed = captureInfo.formatExposureTime(),
             focalLength = captureInfo.formatFocalLength(),
@@ -3557,7 +3605,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             job.cancel()
         }
 
-        if (userPreferences.value.saveLocation) {
+        val timestampFix = _timestampLocationState.value.fix?.takeIf { it.isFresh() }
+        if (timestampCaptureEnabled && timestampFix != null) {
+            cameraController.setLocation(timestampFix.latitude, timestampFix.longitude)
+        } else if (userPreferences.value.saveLocation) {
             val location = locationManager.getCurrentLocation()
             cameraController.setLocation(location?.latitude, location?.longitude)
         } else {
@@ -3603,6 +3654,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         portraitMask = capturePortraitMaskSnapshot(),
         multipleExposure = multipleExposureState.enabled,
         timestampSettings = timestampSettings.takeIf { timestampCaptureEnabled },
+        timestampContext = if (timestampCaptureEnabled) {
+            TimestampCaptureContext(
+                location = _timestampLocationState.value.fix?.takeIf { it.isFresh() },
+                headingDegrees = timestampHeading.value,
+            )
+        } else null,
     )
 
     private fun submitPhotoCapture() {
@@ -6088,7 +6145,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                         userPrefs, cameraController.getCurrentSensorPhysicalAreaMm2(),
                     ),
                     captureExposureCompensationEv,
-                ) + settings.timestampSettings?.toMetadataProperties().orEmpty(),
+                ) + settings.timestampSettings?.toMetadataProperties().orEmpty() +
+                    settings.timestampContext.toMetadataProperties(),
                 rawHighlightsAdjustment = userPrefs?.rawHighlightsAdjustment ?: 0f,
                 rawShadowsAdjustment = userPrefs?.rawShadowsAdjustment ?: 0f,
                 rawBlackPointCorrection = userPrefs?.rawBlackPointCorrection ?: 0f,
@@ -6118,9 +6176,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 deviceModel = DeviceUtil.model,
                 brand = captureInfo.make,
                 dateTaken = captureInfo.captureTime,
-                latitude = captureInfo.latitude,
-                longitude = captureInfo.longitude,
-                altitude = captureInfo.altitude,
+                location = settings.timestampContext?.location?.displayAddress,
+                latitude = settings.timestampContext?.location?.latitude ?: captureInfo.latitude,
+                longitude = settings.timestampContext?.location?.longitude ?: captureInfo.longitude,
+                altitude = settings.timestampContext?.location?.altitude ?: captureInfo.altitude,
                 iso = captureInfo.iso,
                 shutterSpeed = captureInfo.formatExposureTime(),
                 focalLength = captureInfo.formatFocalLength(),
@@ -6368,8 +6427,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                                 bitmap.recycle()
                                 return@withContext null
                             }
-                        val stamped = TimestampBurnIn.apply(bitmap, metadata)
-                        if (stamped !== bitmap) bitmap.recycle()
+                        val square = TimestampGridComposer.cropToSquare(bitmap)
+                        if (square !== bitmap) bitmap.recycle()
+                        val stamped = TimestampBurnIn.apply(square, metadata)
+                        if (stamped !== square) square.recycle()
                         stampedImages += stamped
                     }
                     val collage = TimestampGridComposer.compose(stampedImages) ?: return@withContext null
@@ -7141,6 +7202,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         contentRepository.frameManager.clearCache()
         shutterSoundPlayer.release()
         videoAudioInputManager.release()
+        timestampHeadingManager.stop()
 
         // Accepted photo jobs retain their own images until the process-wide queue finishes.
         burstImageCount = 0

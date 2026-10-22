@@ -1,5 +1,6 @@
 package com.hinnka.mycamera.ui.camera
 
+import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
@@ -59,6 +60,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import coil.compose.AsyncImage
@@ -230,6 +232,8 @@ fun CameraScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val state by viewModel.state.collectAsState()
+    val timestampLocationState by viewModel.timestampLocationState.collectAsState()
+    val timestampHeading by viewModel.timestampHeading.collectAsState()
     val isCameraInitialized by viewModel.isInitialized.collectAsState()
     val latestPhoto by galleryViewModel.latestPhoto.collectAsState()
     val showLevelIndicator by viewModel.showLevelIndicator.collectAsState(initial = false)
@@ -349,6 +353,16 @@ fun CameraScreen(
     var timestampGridAwaitingSave by remember { mutableStateOf(false) }
     var timestampGridPreview by remember { mutableStateOf<com.hinnka.mycamera.timestamp.TimestampGridPreview?>(null) }
     var timestampGridSaving by remember { mutableStateOf(false) }
+    val updateFourGridEnabled: (Boolean) -> Unit = { enabled ->
+        fourGridEnabled = enabled
+        if (!enabled) {
+            timestampGridAwaitingSave = false
+            timestampGridPhotoIds.indices.forEach { timestampGridPhotoIds[it] = null }
+            timestampGridActiveIndex = 0
+            timestampGridPreview?.recycle()
+            timestampGridPreview = null
+        }
+    }
     LaunchedEffect(shootingMode) {
         viewModel.updateTimestampCaptureEnabled(shootingMode == CameraShootingMode.TIMESTAMP)
         if (shootingMode == CameraShootingMode.MOTION && !state.useLivePhoto) {
@@ -391,6 +405,21 @@ fun CameraScreen(
             }
         }
     )
+
+    val timestampLocationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions(),
+        onResult = { viewModel.refreshTimestampLocation() },
+    )
+    LaunchedEffect(shootingMode, timestampLocationState.phase) {
+        if (
+            shootingMode == CameraShootingMode.TIMESTAMP &&
+            timestampLocationState.phase == com.hinnka.mycamera.timestamp.TimestampLocationPhase.PERMISSION_REQUIRED
+        ) {
+            timestampLocationPermissionLauncher.launch(
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+            )
+        }
+    }
 
     // 当打开滤镜面板时，生成预览图
     LaunchedEffect(activePanel) {
@@ -1764,9 +1793,43 @@ fun CameraScreen(
                 ) {
                     TimestampPreviewOverlay(
                         settings = viewModel.timestampSettings,
-                        latitude = state.latitude,
-                        longitude = state.longitude,
+                        latitude = timestampLocationState.fix?.latitude,
+                        longitude = timestampLocationState.fix?.longitude,
+                        locationName = timestampLocationState.fix?.displayAddress,
+                        headingDegrees = timestampHeading,
+                        accuracyMeters = timestampLocationState.fix?.accuracyMeters,
                         modifier = Modifier.align(timestampOverlayAlignment),
+                    )
+                    if (viewModel.timestampSettings.showHeading) {
+                        TimestampCompassOverlay(
+                            headingDegrees = timestampHeading,
+                            modifier = Modifier.align(Alignment.TopStart),
+                        )
+                    }
+                    TimestampLocationStatusPill(
+                        state = timestampLocationState,
+                        backdrop = glassBackdrop,
+                        onRetry = {
+                            val granted = ContextCompat.checkSelfPermission(
+                                context,
+                                Manifest.permission.ACCESS_COARSE_LOCATION,
+                            ) == android.content.pm.PackageManager.PERMISSION_GRANTED ||
+                                ContextCompat.checkSelfPermission(
+                                    context,
+                                    Manifest.permission.ACCESS_FINE_LOCATION,
+                                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                            if (granted) {
+                                viewModel.refreshTimestampLocation()
+                            } else {
+                                timestampLocationPermissionLauncher.launch(
+                                    arrayOf(
+                                        Manifest.permission.ACCESS_FINE_LOCATION,
+                                        Manifest.permission.ACCESS_COARSE_LOCATION,
+                                    ),
+                                )
+                            }
+                        },
+                        modifier = Modifier.align(Alignment.TopCenter),
                     )
                     if (fourGridEnabled) {
                         TimestampGridProgress(
@@ -1796,16 +1859,7 @@ fun CameraScreen(
                 TimestampQuickControls(
                     backdrop = glassBackdrop,
                     fourGridEnabled = fourGridEnabled,
-                    onFourGridChanged = { enabled ->
-                        fourGridEnabled = enabled
-                        if (!enabled) {
-                            timestampGridAwaitingSave = false
-                            timestampGridPhotoIds.indices.forEach { timestampGridPhotoIds[it] = null }
-                            timestampGridActiveIndex = 0
-                            timestampGridPreview?.recycle()
-                            timestampGridPreview = null
-                        }
-                    },
+                    onFourGridChanged = updateFourGridEnabled,
                     onSettingsClick = { showTimestampSettings = true },
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -1817,8 +1871,11 @@ fun CameraScreen(
         TimestampConfigurationSheet(
             visible = showTimestampSettings && shootingMode == CameraShootingMode.TIMESTAMP,
             settings = viewModel.timestampSettings,
-            hasLocation = state.latitude != null && state.longitude != null,
+            hasLocation = timestampLocationState.phase !=
+                com.hinnka.mycamera.timestamp.TimestampLocationPhase.PERMISSION_REQUIRED,
+            fourGridEnabled = fourGridEnabled,
             backdrop = glassBackdrop,
+            onFourGridChanged = updateFourGridEnabled,
             onSettingsChanged = viewModel::updateTimestampSettings,
             onDismiss = { showTimestampSettings = false },
             modifier = Modifier.fillMaxSize(),

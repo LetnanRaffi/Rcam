@@ -182,7 +182,7 @@ data class MediaMetadata(
             exposureBias = exposureBias,
             exposureCompensation = RawCaptureExposureCompensationMetadata.read(customProperties),
             exposureTime = parseExposureTime(shutterSpeed),
-            software = software ?: "PhotonCamera",
+            software = software ?: "Rcam",
             latitude = latitude,
             longitude = longitude,
             altitude = altitude,

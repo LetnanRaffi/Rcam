@@ -26,6 +26,8 @@ import com.hinnka.mycamera.gallery.MediaType
 import com.hinnka.mycamera.gallery.PostEditGeometry
 import com.hinnka.mycamera.hdr.HdrGainmapStrength
 import com.hinnka.mycamera.hdr.UnifiedGainmapProducer
+import com.hinnka.mycamera.timestamp.TimestampBurnIn
+import com.hinnka.mycamera.timestamp.timestampSettings
 import com.hinnka.mycamera.lut.creator.AiPhotoEvaluation
 import com.hinnka.mycamera.lut.BaselineColorCorrectionTarget
 import com.hinnka.mycamera.lut.LutConfig
@@ -3575,11 +3577,18 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     val previewChromaNoiseReduction = if (applyBitmapDenoise) finalCNR else 0f
 
                     // 预览生成
-                    val result = contentRepository.photoProcessor.processBitmap(
+                    val processed = contentRepository.photoProcessor.processBitmap(
                         context, photo.id, currentBitmap, previewMetadata,
                         previewSharpening, previewNoiseReduction, previewChromaNoiseReduction,
                         false
                     )
+                    val result = if (previewMetadata.timestampSettings() != null) {
+                        TimestampBurnIn.apply(processed, previewMetadata).also { stamped ->
+                            if (stamped !== processed) processed.recycle()
+                        }
+                    } else {
+                        processed
+                    }
                     // 只在全分辨率路径下更新亮度估计（结果更准确）
                     if (maxEdge >= FULL_QUALITY_PREVIEW_MAX_EDGE) {
                         currentBrightness[photo.id] = estimateAverageBrightness(result)

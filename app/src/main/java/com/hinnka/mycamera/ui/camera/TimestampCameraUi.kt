@@ -7,9 +7,12 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,6 +50,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -57,9 +64,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hinnka.mycamera.R
 import com.hinnka.mycamera.gallery.GalleryManager
+import com.hinnka.mycamera.timestamp.TimestampBurnIn
+import com.hinnka.mycamera.timestamp.TimestampGridComposer
 import com.hinnka.mycamera.timestamp.TimestampGridPreview
+import com.hinnka.mycamera.timestamp.TimestampLocationPhase
+import com.hinnka.mycamera.timestamp.TimestampLocationState
 import com.hinnka.mycamera.timestamp.TimestampPlacement
 import com.hinnka.mycamera.timestamp.TimestampSettings
+import com.hinnka.mycamera.timestamp.TimestampTextSize
 import com.hinnka.mycamera.timestamp.timestampLines
 import com.hinnka.mycamera.ui.components.CameraGlassStyle
 import com.hinnka.mycamera.ui.components.GlassCapsule
@@ -73,12 +85,16 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 @Composable
 internal fun TimestampPreviewOverlay(
     settings: TimestampSettings,
     latitude: Double?,
     longitude: Double?,
+    locationName: String? = null,
+    headingDegrees: Float? = null,
+    accuracyMeters: Float? = null,
     modifier: Modifier = Modifier,
 ) {
     var currentTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -88,7 +104,9 @@ internal fun TimestampPreviewOverlay(
             delay(1_000L)
         }
     }
-    val lines = timestampLines(settings, currentTime, null, latitude, longitude)
+    val lines = timestampLines(
+        settings, currentTime, locationName, latitude, longitude, headingDegrees, accuracyMeters,
+    )
     if (lines.isEmpty()) return
     val horizontalAlignment = when (settings.placement) {
         TimestampPlacement.TOP_LEFT, TimestampPlacement.BOTTOM_LEFT -> Alignment.Start
@@ -112,13 +130,85 @@ internal fun TimestampPreviewOverlay(
             Text(
                 text = line,
                 color = Color.White,
-                fontSize = 11.sp,
-                lineHeight = 14.sp,
+                fontSize = when (settings.textSize) {
+                    TimestampTextSize.COMPACT -> 10.sp
+                    TimestampTextSize.STANDARD -> 12.sp
+                    TimestampTextSize.LARGE -> 14.sp
+                },
+                lineHeight = when (settings.textSize) {
+                    TimestampTextSize.COMPACT -> 13.sp
+                    TimestampTextSize.STANDARD -> 16.sp
+                    TimestampTextSize.LARGE -> 18.sp
+                },
                 fontWeight = FontWeight.Medium,
                 textAlign = if (horizontalAlignment == Alignment.End) TextAlign.End else TextAlign.Start,
                 style = androidx.compose.ui.text.TextStyle(shadow = ViewfinderTextShadow),
             )
         }
+    }
+}
+
+@Composable
+internal fun TimestampCompassOverlay(
+    headingDegrees: Float?,
+    modifier: Modifier = Modifier,
+) {
+    val heading = headingDegrees ?: return
+    Canvas(modifier.size(82.dp)) {
+        val stroke = size.minDimension * 0.13f
+        drawCircle(
+            color = Color(0xA62C2D2F),
+            radius = size.minDimension / 2f - stroke / 2f,
+            style = Stroke(stroke),
+        )
+        val compassCenter = center
+        val needle = Path().apply {
+            moveTo(compassCenter.x, compassCenter.y - size.minDimension * 0.31f)
+            lineTo(compassCenter.x - size.minDimension * 0.065f, compassCenter.y + size.minDimension * 0.23f)
+            lineTo(compassCenter.x + size.minDimension * 0.065f, compassCenter.y + size.minDimension * 0.23f)
+            close()
+        }
+        rotate(heading) { drawPath(needle, Color(0xFF00BEDC)) }
+        drawContext.canvas.nativeCanvas.apply {
+            val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                color = android.graphics.Color.WHITE
+                textSize = size.minDimension * 0.13f
+                textAlign = android.graphics.Paint.Align.CENTER
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+            }
+            drawText("N", compassCenter.x, stroke * 1.15f, paint)
+            drawText("S", compassCenter.x, size.height - stroke * 0.35f, paint)
+            drawText("W", stroke * 0.65f, compassCenter.y - (paint.ascent() + paint.descent()) / 2f, paint)
+            drawText("E", size.width - stroke * 0.65f, compassCenter.y - (paint.ascent() + paint.descent()) / 2f, paint)
+        }
+    }
+}
+
+@Composable
+internal fun TimestampLocationStatusPill(
+    state: TimestampLocationState,
+    backdrop: LiquidGlassBackdrop,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val label = when (state.phase) {
+        TimestampLocationPhase.IDLE -> return
+        TimestampLocationPhase.PERMISSION_REQUIRED -> stringResource(R.string.timestamp_location_permission)
+        TimestampLocationPhase.LOCATING -> stringResource(R.string.timestamp_location_loading)
+        TimestampLocationPhase.READY -> state.fix?.accuracyMeters?.takeIf(Float::isFinite)?.let {
+            stringResource(R.string.timestamp_location_ready_accuracy, it.roundToInt())
+        } ?: stringResource(R.string.timestamp_location_ready)
+        TimestampLocationPhase.UNAVAILABLE -> stringResource(R.string.timestamp_location_unavailable)
+    }
+    GlassCapsule(
+        backdrop = backdrop,
+        modifier = modifier.height(34.dp).clickable(
+            enabled = state.phase != TimestampLocationPhase.LOCATING,
+            onClick = onRetry,
+        ),
+        cornerRadius = 17.dp,
+    ) {
+        Text(label, color = Color.White, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 12.dp))
     }
 }
 
@@ -247,7 +337,19 @@ private fun TimestampGridSlot(
     val context = LocalContext.current
     val bitmap by produceState<Bitmap?>(initialValue = null, photoId) {
         value = photoId?.let { id ->
-            withContext(Dispatchers.IO) { GalleryManager.loadBitmap(context, id, maxEdge = 320) }
+            withContext(Dispatchers.IO) {
+                val source = GalleryManager.loadBitmap(context, id, maxEdge = 320) ?: return@withContext null
+                val metadata = GalleryManager.loadMetadata(context, id)
+                val square = TimestampGridComposer.cropToSquare(source)
+                if (square !== source) source.recycle()
+                if (metadata == null) {
+                    square
+                } else {
+                    TimestampBurnIn.apply(square, metadata).also {
+                        if (it !== square) square.recycle()
+                    }
+                }
+            }
         }
     }
     DisposableEffect(bitmap) {
@@ -294,12 +396,16 @@ internal fun TimestampConfigurationSheet(
     visible: Boolean,
     settings: TimestampSettings,
     hasLocation: Boolean,
+    fourGridEnabled: Boolean,
     backdrop: LiquidGlassBackdrop,
+    onFourGridChanged: (Boolean) -> Unit,
     onSettingsChanged: (TimestampSettings) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var draft by remember(settings, visible) { mutableStateOf(settings) }
+    val openingLabel = stringResource(R.string.timestamp_label_opening)
+    val closingLabel = stringResource(R.string.timestamp_label_closing)
     AnimatedVisibility(
         visible = visible,
         modifier = modifier,
@@ -318,7 +424,9 @@ internal fun TimestampConfigurationSheet(
                 style = StrongGlassStyle,
             ) {
                 Column(
-                    modifier = Modifier.padding(start = 20.dp, top = 14.dp, end = 20.dp, bottom = 20.dp),
+                    modifier = Modifier
+                        .verticalScroll(rememberScrollState())
+                        .padding(start = 20.dp, top = 14.dp, end = 20.dp, bottom = 20.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     Box(
@@ -361,6 +469,17 @@ internal fun TimestampConfigurationSheet(
                         draft.showCoordinates,
                         enabled = hasLocation,
                     ) { draft = draft.copy(showCoordinates = it) }
+                    TimestampOptionRow(stringResource(R.string.timestamp_show_heading), draft.showHeading) {
+                        draft = draft.copy(showHeading = it)
+                    }
+                    TimestampOptionRow(stringResource(R.string.timestamp_show_accuracy), draft.showAccuracy) {
+                        draft = draft.copy(showAccuracy = it)
+                    }
+                    TimestampOptionRow(
+                        stringResource(R.string.timestamp_four_grid),
+                        fourGridEnabled,
+                        onCheckedChange = onFourGridChanged,
+                    )
                     TimestampOptionRow(stringResource(R.string.timestamp_background_plate), draft.showBackgroundPlate) {
                         draft = draft.copy(showBackgroundPlate = it)
                     }
@@ -371,6 +490,40 @@ internal fun TimestampConfigurationSheet(
                         label = { Text(stringResource(R.string.timestamp_custom_text)) },
                         singleLine = true,
                     )
+                    Text(
+                        stringResource(R.string.timestamp_size),
+                        color = Color.White.copy(alpha = 0.72f),
+                        fontSize = 12.sp,
+                    )
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        TimestampTextSize.entries.forEach { textSize ->
+                            TextButton(
+                                onClick = { draft = draft.copy(textSize = textSize) },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.textButtonColors(
+                                    containerColor = if (draft.textSize == textSize) Color.White.copy(alpha = 0.2f)
+                                    else Color.Transparent,
+                                ),
+                            ) {
+                                val label = when (textSize) {
+                                    TimestampTextSize.COMPACT -> R.string.timestamp_size_compact
+                                    TimestampTextSize.STANDARD -> R.string.timestamp_size_standard
+                                    TimestampTextSize.LARGE -> R.string.timestamp_size_large
+                                }
+                                Text(stringResource(label), color = Color.White, fontSize = 10.sp)
+                            }
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(
+                            onClick = { draft = draft.copy(customText = openingLabel) },
+                            modifier = Modifier.weight(1f),
+                        ) { Text(stringResource(R.string.timestamp_preset_opening), color = Color.White) }
+                        TextButton(
+                            onClick = { draft = draft.copy(customText = closingLabel) },
+                            modifier = Modifier.weight(1f),
+                        ) { Text(stringResource(R.string.timestamp_preset_closing), color = Color.White) }
+                    }
                     Text(
                         stringResource(R.string.timestamp_placement),
                         color = Color.White.copy(alpha = 0.72f),

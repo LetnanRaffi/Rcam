@@ -5535,7 +5535,7 @@ object GalleryManager {
                     noiseReduction = 0f,
                     chromaNoiseReduction = 0f
                 )
-                val processedBitmap = photoProcessor.processBitmap(
+                val processed = photoProcessor.processBitmap(
                     context = context,
                     photoId = photoId,
                     input = originalBitmap,
@@ -5545,6 +5545,13 @@ object GalleryManager {
                     chromaNoiseReduction = 0f,
                     useComputationalAperture = false
                 )
+                val processedBitmap = if (thumbnailMetadata.timestampSettings() != null) {
+                    TimestampBurnIn.apply(processed, thumbnailMetadata).also { stamped ->
+                        if (stamped !== processed) processed.recycle()
+                    }
+                } else {
+                    processed
+                }
 
                 val thumbnailFile = getThumbnailFile(context, photoId)
                 generateThumbnail(processedBitmap, thumbnailFile)
